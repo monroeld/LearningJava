@@ -21,3 +21,6 @@ m.click(int(mouseX), int(mouseY), 1)
 
 # Basic use instructions:
 # https://github.com/SavinaRoja/PyUserInput/wiki/PyMouse
+
+# Take screenshot
+# k.press_keys(['Command','shift','3'])
