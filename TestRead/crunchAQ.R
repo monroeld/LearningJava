@@ -1,5 +1,12 @@
-monsterName <- "Inferninon"
-charLevel <- 107
+
+# Read in CharacterCSV, WeaponCSV, ArmorCSV, ShieldCSV
+characterCSV <- read.csv("CharacterStats.csv", sep = ",", stringsAsFactors = FALSE)
+weaponCSV <- read.csv("WeaponStats.csv", sep = ",", stringsAsFactors = FALSE)
+armorCSV <- read.csv("ArmorStats.csv", sep = ",", stringsAsFactors = FALSE) # Waqaya stats unknown, so averaged all other FO
+shieldCSV <- read.csv("ShieldStats.csv", sep = ",", stringsAsFactors = FALSE) # Toggle shields treated as both.  Note for ironthorn
+
+
+charLevel <- as.numeric(characterCSV[1])
 
 getWebsiteData <- function(monsterName) {
   # Read encyclopedia homepage's data
@@ -28,6 +35,7 @@ getWebsiteData <- function(monsterName) {
   websiteData <- website[grep(monsterName, website)[1]:length(website)]
   return(websiteData)
 }
+
 
 getResists <- function(monsterDF) {
   websiteData <- monsterDF
@@ -68,57 +76,70 @@ getResists <- function(monsterDF) {
 getBlock <- function(monsterDF) {
   websiteData <- monsterDF
   
+  # Calculate expected monster level based on character level
+  expLevel <- charLevel
+  monsterLevel <- strsplit(websiteData[grep("Level", websiteData)], "Level")[[1]][2]
+  monsterLevel <- c(as.numeric(unlist(strsplit(monsterLevel, "\t"))))
+  monsterLevel <- monsterLevel[!is.na(monsterLevel)]
+  expLevel <- monsterLevel[(monsterLevel)<charLevel]
+  expLevel <- expLevel[length(expLevel)]
+  levelIndex <- grep(expLevel, monsterLevel)
   
+  # Define blocking stats
+  blockStats <- c("DEX","LUK")
+  statDF <- websiteData[c(grep("DEX", websiteData[1:20]), grep("LUK", websiteData[1:20]))]
+  statDF[length(statDF)] <- strsplit(statDF[length(statDF)], "<")[[1]][1]
+  monsterStats <- do.call(cbind, lapply(1:length(statDF), function(x)
+    as.numeric(c(unlist(strsplit(statDF[x], "\t"))))
+  ))
+  monsterStats <- statDF[2:nrow(monsterStats), ]
+  colnames(monsterStats) <- blockStats
+  monsterStats <- monsterStats[levelIndex, ]
+  
+  # Define defenses
+  defenses <- c("Melee", "Ranged")
+  defenseDF <- websiteData[c(grep("Melee", websiteData[1:10]),
+                             grep("Ranged", websiteData[1:20]))]
+  defenseDF[length(defenseDF)] <- strsplit(defenseDF[length(defenseDF)], "<")[[1]][1]
+  monsterDefenses <- do.call(cbind, lapply(1:length(defenseDF), function(x)
+    as.numeric(c(unlist(strsplit(defenseDF[x], "\t"))))
+  ))
+  monsterDefenses <- monsterDefenses[2:nrow(monsterDefenses), ]
+  colnames(monsterDefenses) <- defenses
+  monsterDefenses <- monsterDefenses[levelIndex, ]
+ 
+  # Dex/8 + Luk/40
+  adjDefenses <- monsterDefenses + monsterStats[1]/8+monsterStats[2]/40
+  
+  return(adjDefenses)
 }
-
-# websiteData <- getWebsiteData("Inferninon")
-# websiteData2 <- getWebsiteData("Death Worms")
 
 dwDF <- getWebsiteData("Death Worms")
 infDF <- getWebsiteData("Inferninon")
 
-# Calculate expected monster level based on character level
+monsterElement <- strsplit(strsplit(websiteData[1], "Element")[[1]][1], ">")[[1]]
+monsterElement <- trimws(monsterElement[length(monsterElement)])
+
+# Calculate expected monster resists based on character level
 dwResists <- getResists(dwDF)
 infResists <- getResists(infDF)
 
-# Define blocking stats
-blockStats <- c("DEX","LUK")
-statDF <- websiteData[c(grep("DEX", websiteData[1:20]), grep("LUK", websiteData[1:20]))]
-statDF[length(statDF)] <- strsplit(statDF[length(statDF)], "<")[[1]][1]
-monsterStats <- do.call(cbind, lapply(1:length(statDF), function(x)
-  as.numeric(c(unlist(strsplit(statDF[x], "\t"))))
-))
-monsterStats <- statDF[2:nrow(monsterStats), ]
-colnames(monsterStats) <- blockStats
-monsterStats <- monsterStats[levelIndex, ]
-
-# Define defenses
-defenses <- c("Melee", "Ranged")
-defenseDF <- websiteData[c(grep("Melee", websiteData[1:10]),
-                               grep("Ranged", websiteData[1:20]))]
-defenseDF[length(defenseDF)] <- strsplit(defenseDF[length(defenseDF)], "<")[[1]][1]
-monsterDefenses <- do.call(cbind, lapply(1:length(defenseDF), function(x)
-                    as.numeric(c(unlist(strsplit(defenseDF[x], "\t"))))
-                    ))
-monsterDefenses <- monsterDefenses[2:nrow(monsterDefenses), ]
-colnames(monsterDefenses) <- defenses
-monsterDefenses <- monsterDefenses[levelIndex, ]
+# Calculate defenses based on character level
+dwBlock <- getBlock(dwDF)
+infResists <- getResists(infDF)
 
 
 
 
 
 
-# Read in CharacterCSV, WeaponCSV, ArmorCSV, ShieldCSV
-characterCSV <- read.csv("CharacterStats.csv", sep = ",", stringsAsFactors = FALSE)
-weaponCSV <- read.csv("WeaponStats.csv", sep = ",", stringsAsFactors = FALSE)
-armorCSV <- read.csv("ArmorStats.csv", sep = ",", stringsAsFactors = FALSE) # Waqaya stats unknown, so averaged all other FO
-shieldCSV <- read.csv("ShieldStats.csv", sep = ",", stringsAsFactors = FALSE) # Toggle shields treated as both.  Note for ironthorn
 
 # Calculate best player resistance to monster element.  Keep ironthorn separate
 armorResists <- armorCSV[colnames(armorCSV) == paste0("R", tolower(monsterElement))]
 shieldResists <- shieldCSV[colnames(shieldCSV) == paste0("R", tolower(monsterElement))]
-totalResists <- min(armorResists) - max(shieldResists)
+bestResist <- min(armorResists) - max(shieldResists)
+ironthornResist <- min(armorResists) - shieldResists[match("Ironthorn", shieldCSV$Name), 1]
+ironthornResFactor <- ironthornResist/bestResist
 
 # Calculate expected weapon and armor damage
 #   Does not account for resistances, returns a list of BTH and damage value
@@ -135,16 +156,15 @@ attackCalc <- function(weapon, armor) {
   statBTH <- ifelse(weaponRow$Type == "Melee", charSTR*3/40 + charDEX*3/40 + charLUK/40,
                                               charDEX*3/20 + charLUK/40)
   
-  totalBTH <- armorRow$BTH + weaponRow$BTH
+  totalBTH <- c(armorRow$BTH + weaponRow$BTH, armorRow$BTH + weaponRow$Bspecial)
 
-  noSpecial <- (1-weaponRow$Rspecial) * (weaponRow$Base * armorRow$Base.Mult + #Base damage
+  noSpecial <- (1-weaponRow$Rspecial) * weaponRow$Dmult * (weaponRow$Base * armorRow$Base.Mult + #Base damage
                                          (weaponRow$Random/2) * armorRow$Rand.Mult + #Random damage
                                           statDMG * armorRow$Stat.Mult + #Stat damage
                                            0.1*charLUK/2) #Lucky strike 10% chance, R damage
   onlySpecial <- weaponRow$Rspecial * (weaponRow$Dspecial * (weaponRow$Base + weaponRow$Random/2) + #B/R
                                       weaponRow$Lspecial * 0.1 * charLUK) # I think it's like a lucky strike?
-  expectedDamage = noSpecial + onlySpecial
-  return(list(totalBTH, expectedDamage))
+  return(list(totalBTH, noSpecial, onlySpecial))
 }
 
 # Create matrix of attack damages
