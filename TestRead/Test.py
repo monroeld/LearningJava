@@ -77,3 +77,11 @@ print("That was 3!")
 
 # Basic use instructions:
 # https://github.com/SavinaRoja/PyUserInput/wiki/PyMouse
+
+# Take screenshot
+# k.press_keys(['Command','shift','3'])
+
+#import cv2
+# OpenCV-Python
+#img = cv2.imread("Test.png")
+#print(type(img))
