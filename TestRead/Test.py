@@ -81,7 +81,7 @@ print("That was 3!")
 # Take screenshot
 # k.press_keys(['Command','shift','3'])
 
-#import cv2
+import cv2
 # OpenCV-Python
-#img = cv2.imread("Test.png")
-#print(type(img))
+img = cv2.imread("Test.png")
+print(type(img))
