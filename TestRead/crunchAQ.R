@@ -36,8 +36,7 @@ getWebsiteData <- function(monsterName) {
   return(websiteData)
 }
 
-
-getResists <- function(monsterDF) {
+getMonsterResists <- function(monsterDF) {
   websiteData <- monsterDF
   # Calculate expected monster level based on character level
   expLevel <- charLevel
@@ -73,7 +72,7 @@ getResists <- function(monsterDF) {
   return(monsterResists)
 }
 
-getBlock <- function(monsterDF) {
+getMonsterBlock <- function(monsterDF) {
   websiteData <- monsterDF
   
   # Calculate expected monster level based on character level
@@ -89,10 +88,10 @@ getBlock <- function(monsterDF) {
   blockStats <- c("DEX","LUK")
   statDF <- websiteData[c(grep("DEX", websiteData[1:20]), grep("LUK", websiteData[1:20]))]
   statDF[length(statDF)] <- strsplit(statDF[length(statDF)], "<")[[1]][1]
-  monsterStats <- do.call(cbind, lapply(1:length(statDF), function(x)
+  monsterStats <- as.data.frame(do.call(cbind, lapply(1:length(statDF), function(x)
     as.numeric(c(unlist(strsplit(statDF[x], "\t"))))
-  ))
-  monsterStats <- statDF[2:nrow(monsterStats), ]
+  )))
+  monsterStats <- monsterStats[2:nrow(monsterStats), ]
   colnames(monsterStats) <- blockStats
   monsterStats <- monsterStats[levelIndex, ]
   
@@ -101,45 +100,44 @@ getBlock <- function(monsterDF) {
   defenseDF <- websiteData[c(grep("Melee", websiteData[1:10]),
                              grep("Ranged", websiteData[1:20]))]
   defenseDF[length(defenseDF)] <- strsplit(defenseDF[length(defenseDF)], "<")[[1]][1]
-  monsterDefenses <- do.call(cbind, lapply(1:length(defenseDF), function(x)
+  monsterDefenses <- as.data.frame(do.call(cbind, lapply(1:length(defenseDF), function(x)
     as.numeric(c(unlist(strsplit(defenseDF[x], "\t"))))
-  ))
+  )))
   monsterDefenses <- monsterDefenses[2:nrow(monsterDefenses), ]
   colnames(monsterDefenses) <- defenses
   monsterDefenses <- monsterDefenses[levelIndex, ]
- 
-  # Dex/8 + Luk/40
-  adjDefenses <- monsterDefenses + monsterStats[1]/8+monsterStats[2]/40
   
+  # Dex/8 + Luk/40
+  adjDefenses <- as.numeric(monsterDefenses) + as.numeric(monsterStats[1]/8) + as.numeric(monsterStats[2]/40)
+  names(adjDefenses) <- c("Melee", "Ranged")
   return(adjDefenses)
 }
 
-dwDF <- getWebsiteData("Death Worms")
-infDF <- getWebsiteData("Inferninon")
+getMonsterInfo <- function(monsterName) {
+  monsterDF <- getWebsiteData(monsterName)
+  monsterResists <- data.frame(getMonsterResists(monsterDF))
+  monsterBlock <- data.frame(getMonsterBlock(monsterDF))
+  
+  monsterElement <- strsplit(strsplit(monsterDF[1], "Element")[[1]][1], ">")[[1]]
+  monsterElement <- data.frame(trimws(monsterElement[length(monsterElement)]))
+  colnames(monsterElement) <- "monsterElement"
+  
+  total <- cbind(t(monsterResists), t(monsterBlock), monsterElement)
+  rownames(total) <- NULL
+  
+  return(total)
+}
 
-monsterElement <- strsplit(strsplit(websiteData[1], "Element")[[1]][1], ">")[[1]]
-monsterElement <- trimws(monsterElement[length(monsterElement)])
-
-# Calculate expected monster resists based on character level
-dwResists <- getResists(dwDF)
-infResists <- getResists(infDF)
-
-# Calculate defenses based on character level
-dwBlock <- getBlock(dwDF)
-infResists <- getResists(infDF)
-
-
-
-
-
-
+infInfo <- getMonsterInfo("Inferninon")
 
 # Calculate best player resistance to monster element.  Keep ironthorn separate
-armorResists <- armorCSV[colnames(armorCSV) == paste0("R", tolower(monsterElement))]
-shieldResists <- shieldCSV[colnames(shieldCSV) == paste0("R", tolower(monsterElement))]
+armorResists <- armorCSV[colnames(armorCSV) == paste0("R", tolower(infInfo$monsterElement))]
+shieldResists <- shieldCSV[colnames(shieldCSV) == paste0("R", tolower(infInfo$monsterElement))]
 bestResist <- min(armorResists) - max(shieldResists)
+
 ironthornResist <- min(armorResists) - shieldResists[match("Ironthorn", shieldCSV$Name), 1]
 ironthornResFactor <- ironthornResist/bestResist
+
 
 # Calculate expected weapon and armor damage
 #   Does not account for resistances, returns a list of BTH and damage value
@@ -152,61 +150,123 @@ attackCalc <- function(weapon, armor) {
   charLUK <- characterCSV$LUK
   statName <- ifelse(weaponRow$Type == "Melee", "STR", "DEX")
   statDMG <- ifelse(weaponRow$Type == "Melee", charSTR/8 + charLUK*3/80,
-                                              charSTR/10 + charDEX/40 + charLUK*3/80)
+                    charSTR/10 + charDEX/40 + charLUK*3/80)
   statBTH <- ifelse(weaponRow$Type == "Melee", charSTR*3/40 + charDEX*3/40 + charLUK/40,
-                                              charDEX*3/20 + charLUK/40)
+                    charDEX*3/20 + charLUK/40)
   
-  totalBTH <- c(armorRow$BTH + weaponRow$BTH, armorRow$BTH + weaponRow$Bspecial)
-
+  attackBTH <- armorRow$BTH + weaponRow$BTH
+  
   noSpecial <- (1-weaponRow$Rspecial) * weaponRow$Dmult * (weaponRow$Base * armorRow$Base.Mult + #Base damage
-                                         (weaponRow$Random/2) * armorRow$Rand.Mult + #Random damage
-                                          statDMG * armorRow$Stat.Mult + #Stat damage
-                                           0.1*charLUK/2) #Lucky strike 10% chance, R damage
-  onlySpecial <- weaponRow$Rspecial * (weaponRow$Dspecial * (weaponRow$Base + weaponRow$Random/2) + #B/R
-                                      weaponRow$Lspecial * 0.1 * charLUK) # I think it's like a lucky strike?
-  return(list(totalBTH, noSpecial, onlySpecial))
+                                                             (weaponRow$Random/2) * armorRow$Rand.Mult + #Random damage
+                                                             statDMG * armorRow$Stat.Mult + #Stat damage
+                                                             0.1*charLUK/2) #Lucky strike 10% chance, R damage
+  
+  return(list(attackBTH, noSpecial))
 }
 
-# Create matrix of attack damages
-attackDF <- t(data.frame(do.call(cbind, lapply(weaponCSV$Name, function(x)
-                            c(sapply(armorCSV$Name, function(y)
-                                    round(unlist(attackCalc(x, y)[2]),1)))
-                            ))))
-attackDF <- data.frame(attackDF)
-colnames(attackDF) <- armorCSV$Name
-attackDF$Weapon <- weaponCSV$Name
-rownames(attackDF) <- weaponCSV$Name
-attackDF$Type <- weaponCSV$Type
-attackDF$Element <- weaponCSV$Element
+specialCalc <- function(weapon, armor) {
+  weaponRow <- weaponCSV[grep(weapon, weaponCSV$Name), ]
+  armorRow <- armorCSV[grep(armor, armorCSV$Name), ]
+  
+  charSTR <- characterCSV$STR
+  charDEX <- characterCSV$DEX
+  charLUK <- characterCSV$LUK
+  statName <- ifelse(weaponRow$Type == "Melee", "STR", "DEX")
+  statBTH <- ifelse(weaponRow$Type == "Melee", charSTR*3/40 + charDEX*3/40 + charLUK/40,
+                    charDEX*3/20 + charLUK/40)
+  onlySpecial <- weaponRow$Rspecial * (weaponRow$Dspecial * (weaponRow$Base + weaponRow$Random/2) + #B/R
+                                         weaponRow$Lspecial * 0.1 * charLUK) # I think it's like a lucky strike?
+  specialBTH <- armorRow$BTH + weaponRow$Bspecial
+  return(list(specialBTH, onlySpecial))
+}
 
-# Create matrix of bth possibilities
-bthDF <- t(data.frame(do.call(cbind, lapply(weaponCSV$Name, function(x)
+damageCalc <- function(monsterInfo, bthMod, dmgMult) {
+  attackDF <- t(data.frame(do.call(cbind, lapply(weaponCSV$Name, function(x)
+                          c(sapply(armorCSV$Name, function(y)
+                                  round(unlist(attackCalc(x, y)[2]),1)*dmgMult))
+                          ))))
+  attackDF <- data.frame(attackDF)
+  colnames(attackDF) <- armorCSV$Name
+  attackDF$Weapon <- weaponCSV$Name
+  rownames(attackDF) <- weaponCSV$Name
+  attackDF$Type <- weaponCSV$Type
+  attackDF$Element <- weaponCSV$Element
+  
+  bthDF <- t(data.frame(do.call(cbind, lapply(weaponCSV$Name, function(x)
+                        c(sapply(armorCSV$Name, function(y)
+                                round(unlist(attackCalc(x, y)[1]),1)+bthMod))
+                        ))))
+  bthDF <- data.frame(bthDF)
+  colnames(bthDF) <- armorCSV$Name
+  bthDF$Weapon <- weaponCSV$Name
+  rownames(bthDF) <- weaponCSV$Name
+  
+  specialDF <- t(data.frame(do.call(cbind, lapply(weaponCSV$Name, function(x)
                             c(sapply(armorCSV$Name, function(y)
-                                    round(unlist(attackCalc(x, y)[1]),1)))
+                                    round(unlist(specialCalc(x, y)[2]),1)*dmgMult))
                             ))))
-bthDF <- data.frame(bthDF)
-colnames(bthDF) <- armorCSV$Name
-bthDF$Weapon <- weaponCSV$Name
-rownames(bthDF) <- weaponCSV$Name
+  specialDF <- data.frame(specialDF)
+  colnames(specialDF) <- armorCSV$Name
+  specialDF$Weapon <- weaponCSV$Name
+  rownames(specialDF) <- weaponCSV$Name
+  specialDF$Type <- weaponCSV$Type
+  specialDF$Element <- weaponCSV$Element
+  
+  specialBTH <- t(data.frame(do.call(cbind, lapply(weaponCSV$Name, function(x)
+                            c(sapply(armorCSV$Name, function(y)
+                                    round(unlist(specialCalc(x, y)[1]),1)+bthMod))
+                            ))))
+  specialBTH <- data.frame(specialBTH)
+  colnames(specialBTH) <- armorCSV$Name
+  specialBTH$Weapon <- weaponCSV$Name
+  rownames(specialBTH) <- weaponCSV$Name
+  
+  expectedDF <- as.data.frame(t(data.frame(do.call(cbind, lapply(1:nrow(attackDF), function(x) {
+                              c(sapply(1:nrow(armorCSV), function(y) {
+      weaponName <- rownames(attackDF)[x]
+      weaponType <- weaponCSV$Type[match(weaponName, weaponCSV$Name)]
+      weaponElement <- weaponCSV$Element[match(weaponName, weaponCSV$Name)]
+      
+      # Calculate special DF.  Not subject to element locking, so it goes first
+      specialMRM <- ifelse(weaponType == "Melee",
+                           (100 - monsterInfo$Melee + specialBTH[x, y])/100,
+                           (100 - monsterInfo$Ranged + specialBTH[x, y])/100)
+      names(specialMRM) <- NULL
+      specialMRM <- ifelse(specialMRM > 1, specialMRM == 1, specialMRM)
+      specialMRM <- ifelse(specialMRM < 0, specialMRM == 0, specialMRM)
+      factorResist <- monsterInfo[match(weaponElement, names(monsterInfo))]
+      expectedSpecial <- round(specialDF[x, y] * specialMRM * factorResist/100, 1)
+      
+      
+      # Calculate basic attack DF
+      attackMRM <- ifelse(weaponType == "Melee",
+                          (100 - monsterInfo$Melee + bthDF[x, y])/100,
+                          (100 - monsterInfo$Ranged + bthDF[x, y])/100)
+      names(attackMRM) <- NULL
+      attackMRM <- ifelse(attackMRM > 1, attackMRM == 1, attackMRM)
+      attackMRM <- ifelse(attackMRM < 0, attackMRM == 0, attackMRM)
+      weaponElement <- ifelse(armorCSV$Element[y] != "Any",
+                              armorCSV$Element[y],
+                              weaponCSV$Element[match(weaponName, weaponCSV$Name)])
+      factorResist <- monsterInfo[match(weaponElement, names(monsterInfo))]
+      expectedAttack <- round(attackDF[x, y] * attackMRM * factorResist/100, 1)
+      
+      
+      return(expectedSpecial + expectedAttack)
+    }))
+  })))))
+  
+  colnames(expectedDF) <- armorCSV$Name
+  rownames(expectedDF) <- weaponCSV$Name
+  
+  return(expectedDF)
+}
 
-expectedDF <- t(data.frame(do.call(cbind, lapply(1:nrow(attackDF), function(x) {
-                            c(sapply(1:10, function(y) {   # Currently 10 armors
-                                    weaponName <- rownames(attackDF)[x]
-                                    weaponType <- weaponCSV$Type[match(weaponName, weaponCSV$Name)]
-                                    factorMRM <- ifelse(weaponType == "Melee",
-                                                (100-monsterDefenses[1]+bthDF[x, y])/100,
-                                                (100-monsterDefenses[2]+bthDF[x, y])/100)
-                                    names(factorMRM) <- NULL
-                                    factorMRM <- ifelse(factorMRM > 1, factorMRM == 1, factorMRM)
-                                    factorMRM <- ifelse(factorMRM < 0, factorMRM == 0, factorMRM)
-                                    weaponElement <- ifelse(colnames(attackDF)[y] == "Algern C",
-                                                            "Dark",
-                                                            weaponCSV$Element[match(weaponName, weaponCSV$Name)])
-                                    factorResist <- monsterResists[match(weaponElement, names(monsterResists))]
-                                    expectedDamage <- attackDF[x, y] * factorMRM * factorResist/100
-                                    return(expectedDamage)
-                            }))
-  }))))
-expectedDF <- data.frame(expectedDF)
-colnames(expectedDF) <- armorCSV$Name
-rownames(expectedDF) <- weaponCSV$Name
+anyShield <- damageCalc(infInfo, 0, 1)
+ironThorn <- damageCalc(infInfo, -10, 1.5)
+
+# plotDF <- melt(expectedDF, id = NULL)
+# colnames(plotDF) <- c("Weapon", "Armor", "Damage")
+# 
+# ggplot() + geom_tile(data = plotDF, aes(x = Weapon, y = Armor, fill = log10(Damage))) +
+#   scale_fill_gradient(low = "red", high = "blue")
