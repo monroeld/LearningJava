@@ -131,13 +131,25 @@ getMonsterInfo <- function(monsterName) {
 infInfo <- getMonsterInfo("Inferninon")
 
 # Calculate best player resistance to monster element.  Keep ironthorn separate
+
+# currently just saves the best value.  How do I want to relate resistances to damage?  Dmg / res?
 armorResists <- armorCSV[colnames(armorCSV) == paste0("R", tolower(infInfo$monsterElement))]
+# armorResists$Name <- armorCSV$Name
 shieldResists <- shieldCSV[colnames(shieldCSV) == paste0("R", tolower(infInfo$monsterElement))]
-bestResist <- min(armorResists) - max(shieldResists)
+# shieldResists$Name <- shieldCSV$Name
 
-ironthornResist <- min(armorResists) - shieldResists[match("Ironthorn", shieldCSV$Name), 1]
+charResists <- data.frame(t(do.call(rbind, lapply(1:nrow(armorResists), function(x) {
+                    sapply(1:nrow(shieldResists), function(y)
+                      armorResists[x, 1] - shieldResists[y, 1] )}))), row.names = shieldCSV$Name)
+colnames(charResists) <- armorCSV$Name
+
+bestResist <- c(min(charResists),
+                armorResists$Name[match(min(armorResists[, 1]), armorResists[, 1])],
+                shieldResists$Name[match(max(shieldResists[, 1]), shieldResists[, 1])])
+
+ironthornResist <- c(min(armorResists[, 1]) - shieldResists[match("Ironthorn", shieldCSV$Name), 1],
+                     armorResists$Name[match(min(armorResists[, 1]), armorResists[, 1])])
 ironthornResFactor <- ironthornResist/bestResist
-
 
 # Calculate expected weapon and armor damage
 #   Does not account for resistances, returns a list of BTH and damage value
@@ -251,8 +263,7 @@ damageCalc <- function(monsterInfo, bthMod, dmgMult) {
       factorResist <- monsterInfo[match(weaponElement, names(monsterInfo))]
       expectedAttack <- round(attackDF[x, y] * attackMRM * factorResist/100, 1)
       
-      
-      return(expectedSpecial + expectedAttack)
+      return(as.numeric(expectedSpecial) + as.numeric(expectedAttack))
     }))
   })))))
   
@@ -264,6 +275,15 @@ damageCalc <- function(monsterInfo, bthMod, dmgMult) {
 
 anyShield <- damageCalc(infInfo, 0, 1)
 ironThorn <- damageCalc(infInfo, -10, 1.5)
+
+ironthornDmgFactor <- round(max(ironThorn[, ironthornResist[2]]) /
+                        max(anyShield[, match(bestResist[2], colnames(anyShield))]), 2)
+
+
+
+ironthornDmg <- cbind(data.frame(ironThorn[, ironthornResist[2]], row.names = rownames(ironThorn)),
+                      data.frame(anyShield[, match(bestResist[2], colnames(anyShield))]))
+colnames(ironthornDmg) <- c("ironthorn", "other")
 
 # plotDF <- melt(expectedDF, id = NULL)
 # colnames(plotDF) <- c("Weapon", "Armor", "Damage")
