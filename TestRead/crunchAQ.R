@@ -128,7 +128,7 @@ getMonsterInfo <- function(monsterName) {
   return(total)
 }
 
-infInfo <- getMonsterInfo("Inferninon")
+infInfo <- getMonsterInfo("BURP")
 
 # Calculate best player resistance to monster element.  Keep ironthorn separate
 
@@ -244,8 +244,8 @@ damageCalc <- function(monsterInfo, bthMod, dmgMult) {
                            (100 - monsterInfo$Melee + specialBTH[x, y])/100,
                            (100 - monsterInfo$Ranged + specialBTH[x, y])/100)
       names(specialMRM) <- NULL
-      specialMRM <- ifelse(specialMRM > 1, specialMRM == 1, specialMRM)
-      specialMRM <- ifelse(specialMRM < 0, specialMRM == 0, specialMRM)
+      specialMRM <- ifelse(specialMRM > 1, 1, specialMRM)
+      specialMRM <- ifelse(specialMRM < 0, 0, specialMRM)
       factorResist <- monsterInfo[match(weaponElement, names(monsterInfo))]
       expectedSpecial <- round(specialDF[x, y] * specialMRM * factorResist/100, 1)
       
@@ -255,8 +255,8 @@ damageCalc <- function(monsterInfo, bthMod, dmgMult) {
                           (100 - monsterInfo$Melee + bthDF[x, y])/100,
                           (100 - monsterInfo$Ranged + bthDF[x, y])/100)
       names(attackMRM) <- NULL
-      attackMRM <- ifelse(attackMRM > 1, attackMRM == 1, attackMRM)
-      attackMRM <- ifelse(attackMRM < 0, attackMRM == 0, attackMRM)
+      attackMRM <- ifelse(attackMRM > 1, 1, attackMRM)
+      attackMRM <- ifelse(attackMRM < 0, 0, attackMRM)
       weaponElement <- ifelse(armorCSV$Element[y] != "Any",
                               armorCSV$Element[y],
                               weaponCSV$Element[match(weaponName, weaponCSV$Name)])
@@ -276,17 +276,10 @@ damageCalc <- function(monsterInfo, bthMod, dmgMult) {
 anyShield <- damageCalc(infInfo, 0, 1)
 ironThorn <- damageCalc(infInfo, -10, 1.5)
 
-ironthornDmgFactor <- round(max(ironThorn[, ironthornResist[2]]) /
-                        max(anyShield[, match(bestResist[2], colnames(anyShield))]), 2)
-
-
-
-ironthornDmg <- cbind(data.frame(ironThorn[, ironthornResist[2]], row.names = rownames(ironThorn)),
-                      data.frame(anyShield[, match(bestResist[2], colnames(anyShield))]))
-colnames(ironthornDmg) <- c("ironthorn", "other")
-
-# plotDF <- melt(expectedDF, id = NULL)
-# colnames(plotDF) <- c("Weapon", "Armor", "Damage")
+# ironthornDmgFactor <- round(max(ironThorn[, ironthornResist[2]]) /
+#                         max(anyShield[, match(bestResist[2], colnames(anyShield))]), 2)
 # 
-# ggplot() + geom_tile(data = plotDF, aes(x = Weapon, y = Armor, fill = log10(Damage))) +
-#   scale_fill_gradient(low = "red", high = "blue")
+# ironthornDmg <- cbind(data.frame(ironThorn[, ironthornResist[2]], row.names = rownames(ironThorn)),
+#                       data.frame(anyShield[, match(bestResist[2], colnames(anyShield))]))
+# colnames(ironthornDmg) <- c("ironthorn", "other")
+
