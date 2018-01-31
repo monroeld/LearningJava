@@ -309,7 +309,9 @@ findBest(getMonsterInfo("BURP"))
 # infInfo <- getMonsterInfo("BURP")
 
 
-
+library(rPython)
+python.exec("print 'hello world' ")
+https://cran.r-project.org/web/packages/rPython/rPython.pdf
 
 
 
