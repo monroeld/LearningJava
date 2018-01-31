@@ -2,9 +2,9 @@
 # Read in CharacterCSV, WeaponCSV, ArmorCSV, ShieldCSV
 characterCSV <- read.csv("CharacterStats.csv", sep = ",", stringsAsFactors = FALSE)
 weaponCSV <- read.csv("WeaponStats.csv", sep = ",", stringsAsFactors = FALSE)
-armorCSV <- read.csv("ArmorStats.csv", sep = ",", stringsAsFactors = FALSE) # Waqaya stats unknown, so averaged all other FO
+armorCSV <- read.csv("ArmorStats.csv", sep = ",", stringsAsFactors = FALSE) 
 shieldCSV <- read.csv("ShieldStats.csv", sep = ",", stringsAsFactors = FALSE) # Toggle shields treated as both.  Note for ironthorn
-
+armorCSV <- subset(armorCSV, Name != "Steel Plate") # Will never be the best
 
 charLevel <- as.numeric(characterCSV[1])
 
@@ -273,11 +273,35 @@ findBest <- function(monsterInfo) {
   ironthornResFactor <- as.numeric(ironthornResist[1])/as.numeric(bestResist[1])
   
   anyShield <- damageCalc(monsterInfo, 0, 1)
-  if (ironthornResFactor < 1.5) {
-    ironThorn <- damageCalc(monsterInfo, -10, 1.5)
-  }
+  ironThorn <- damageCalc(monsterInfo, -10, 1.5)
 
-  return(c(anyShield, ironThorn))
+  ifelse(max(anyShield) > max(ironThorn),
+        mostDMG <- c(max(anyShield), weaponCSV$Name[which(max(anyShield)==anyShield, arr.ind = TRUE)[1]],
+                      armorCSV$Name[which(max(anyShield)==anyShield, arr.ind = TRUE)[2]], "No Ironthorn"),
+        mostDMG <- c(max(ironThorn), weaponCSV$Name[which(max(ironThorn)==ironThorn, arr.ind = TRUE)[1]],
+                      armorCSV$Name[which(max(ironThorn)==ironThorn, arr.ind = TRUE)[2]], "Ironthorn"))
+  names(mostDMG) <- c("Expected Damage", "Weapon", "Armor", "Shield")
+
+  anyshieldRatio <- data.frame(sapply(1:nrow(anyShield), function(x) anyShield[x, ]/(armorResists[, 1] -
+    max(shieldCSV[, match(paste0("R", tolower(monsterInfo$monsterElement)), colnames(shieldCSV))]))))
+  colnames(anyshieldRatio) <- rownames(anyShield)
+  anyshieldRatio <- c(max(unlist(anyshieldRatio)),
+                          unlist(strsplit(names(which(unlist(anyshieldRatio) == max(unlist(t(anyshieldRatio))), arr.ind = TRUE)), "[.]")[[1]]))
+  
+  # Not right yet
+  ironthornRatio <- data.frame(sapply(1:nrow(ironThorn), function(x) ironThorn[x, ]/(armorResists[, 1] -
+                      shieldCSV[match("Ironthorn", shieldCSV$Name),
+                               match(paste0("R", tolower(monsterInfo$monsterElement)), colnames(shieldCSV))])))
+  colnames(ironthornRatio) <- rownames(ironThorn)
+  ironthornRatio <- c(max(unlist(ironthornRatio)),
+                      unlist(strsplit(names(which(unlist(ironthornRatio) == max(unlist(t(ironthornRatio))), arr.ind = TRUE)), "[.]")[[1]]))
+  
+  bestRatios <- rbind(ironthornRatio, anyshieldRatio)
+  colnames(bestRatios) <- c("DMG / Resists", "Weapon", "Armor")
+  
+  
+  
+  return(list(mostDMG, bestRatios))
 }
 
 findBest(getMonsterInfo("BURP"))
