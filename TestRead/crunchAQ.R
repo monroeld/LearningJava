@@ -8,6 +8,7 @@ shieldCSV <- read.csv("ShieldStats.csv", sep = ",", stringsAsFactors = FALSE) # 
 
 charLevel <- as.numeric(characterCSV[1])
 
+options(warn = -1)
 getWebsiteData <- function(monsterName) {
   # Read encyclopedia homepage's data
   encyclopedia <-readLines("http://forums2.battleon.com/f/tm.asp?m=20966452")
@@ -128,29 +129,6 @@ getMonsterInfo <- function(monsterName) {
   return(total)
 }
 
-infInfo <- getMonsterInfo("Inferninon")
-
-# Calculate best player resistance to monster element.  Keep ironthorn separate
-
-# currently just saves the best value.  How do I want to relate resistances to damage?  Dmg / res?
-armorResists <- armorCSV[colnames(armorCSV) == paste0("R", tolower(infInfo$monsterElement))]
-# armorResists$Name <- armorCSV$Name
-shieldResists <- shieldCSV[colnames(shieldCSV) == paste0("R", tolower(infInfo$monsterElement))]
-# shieldResists$Name <- shieldCSV$Name
-
-charResists <- data.frame(t(do.call(rbind, lapply(1:nrow(armorResists), function(x) {
-                    sapply(1:nrow(shieldResists), function(y)
-                      armorResists[x, 1] - shieldResists[y, 1] )}))), row.names = shieldCSV$Name)
-colnames(charResists) <- armorCSV$Name
-
-bestResist <- c(min(charResists),
-                armorResists$Name[match(min(armorResists[, 1]), armorResists[, 1])],
-                shieldResists$Name[match(max(shieldResists[, 1]), shieldResists[, 1])])
-
-ironthornResist <- c(min(armorResists[, 1]) - shieldResists[match("Ironthorn", shieldCSV$Name), 1],
-                     armorResists$Name[match(min(armorResists[, 1]), armorResists[, 1])])
-ironthornResFactor <- ironthornResist/bestResist
-
 # Calculate expected weapon and armor damage
 #   Does not account for resistances, returns a list of BTH and damage value
 attackCalc <- function(weapon, armor) {
@@ -192,11 +170,14 @@ specialCalc <- function(weapon, armor) {
   return(list(specialBTH, onlySpecial))
 }
 
-damageCalc <- function(monsterInfo, bthMod, dmgMult) {
+damageCalc <- function(bthMod, dmgMult, monsterName) {
+  # Pull this for resists and MRM
+  monsterInfo <- getMonsterInfo(monsterName)
+  
   attackDF <- t(data.frame(do.call(cbind, lapply(weaponCSV$Name, function(x)
-                          c(sapply(armorCSV$Name, function(y)
-                                  round(unlist(attackCalc(x, y)[2]),1)*dmgMult))
-                          ))))
+    c(sapply(armorCSV$Name, function(y)
+      round(unlist(attackCalc(x, y)[2]),1)*dmgMult))
+  ))))
   attackDF <- data.frame(attackDF)
   colnames(attackDF) <- armorCSV$Name
   attackDF$Weapon <- weaponCSV$Name
@@ -205,18 +186,18 @@ damageCalc <- function(monsterInfo, bthMod, dmgMult) {
   attackDF$Element <- weaponCSV$Element
   
   bthDF <- t(data.frame(do.call(cbind, lapply(weaponCSV$Name, function(x)
-                        c(sapply(armorCSV$Name, function(y)
-                                round(unlist(attackCalc(x, y)[1]),1)+bthMod))
-                        ))))
+    c(sapply(armorCSV$Name, function(y)
+      round(unlist(attackCalc(x, y)[1]),1)+bthMod))
+  ))))
   bthDF <- data.frame(bthDF)
   colnames(bthDF) <- armorCSV$Name
   bthDF$Weapon <- weaponCSV$Name
   rownames(bthDF) <- weaponCSV$Name
   
   specialDF <- t(data.frame(do.call(cbind, lapply(weaponCSV$Name, function(x)
-                            c(sapply(armorCSV$Name, function(y)
-                                    round(unlist(specialCalc(x, y)[2]),1)*dmgMult))
-                            ))))
+    c(sapply(armorCSV$Name, function(y)
+      round(unlist(specialCalc(x, y)[2]),1)*dmgMult))
+  ))))
   specialDF <- data.frame(specialDF)
   colnames(specialDF) <- armorCSV$Name
   specialDF$Weapon <- weaponCSV$Name
@@ -225,16 +206,16 @@ damageCalc <- function(monsterInfo, bthMod, dmgMult) {
   specialDF$Element <- weaponCSV$Element
   
   specialBTH <- t(data.frame(do.call(cbind, lapply(weaponCSV$Name, function(x)
-                            c(sapply(armorCSV$Name, function(y)
-                                    round(unlist(specialCalc(x, y)[1]),1)+bthMod))
-                            ))))
+    c(sapply(armorCSV$Name, function(y)
+      round(unlist(specialCalc(x, y)[1]),1)+bthMod))
+  ))))
   specialBTH <- data.frame(specialBTH)
   colnames(specialBTH) <- armorCSV$Name
   specialBTH$Weapon <- weaponCSV$Name
   rownames(specialBTH) <- weaponCSV$Name
   
   expectedDF <- as.data.frame(t(data.frame(do.call(cbind, lapply(1:nrow(attackDF), function(x) {
-                              c(sapply(1:nrow(armorCSV), function(y) {
+    c(sapply(1:nrow(armorCSV), function(y) {
       weaponName <- rownames(attackDF)[x]
       weaponType <- weaponCSV$Type[match(weaponName, weaponCSV$Name)]
       weaponElement <- weaponCSV$Element[match(weaponName, weaponCSV$Name)]
@@ -273,20 +254,37 @@ damageCalc <- function(monsterInfo, bthMod, dmgMult) {
   return(expectedDF)
 }
 
-anyShield <- damageCalc(infInfo, 0, 1)
-ironThorn <- damageCalc(infInfo, -10, 1.5)
+findBestEquipment <- function(monsterName) {
+  monsterInfo <- getMonsterInfo(monsterName)
+  
+  # Calculate best player resistance to monster element.  Keep ironthorn separate
+  armorResists <- armorCSV[colnames(armorCSV) == paste0("R", tolower(monsterInfo$monsterElement))]
+  shieldResists <- shieldCSV[colnames(shieldCSV) == paste0("R", tolower(monsterInfo$monsterElement))]
+  
+  charResists <- data.frame(t(do.call(rbind, lapply(1:nrow(armorResists), function(x) {
+    sapply(1:nrow(shieldResists), function(y)
+      armorResists[x, 1] - shieldResists[y, 1] )}))), row.names = shieldCSV$Name)
+  colnames(charResists) <- armorCSV$Name
+  
+  bestResist <- c(min(charResists),
+                  armorCSV$Name[match(min(armorResists[, 1]), armorResists[, 1])],
+                  shieldCSV$Name[match(max(shieldResists[, 1]), shieldResists[, 1])])
+  
+  ironthornResist <- c(min(armorResists[, 1]) - shieldResists[match("Ironthorn", shieldCSV$Name), 1],
+                       armorCSV$Name[match(min(armorResists[, 1]), armorResists[, 1])])
+  ironthornResFactor <- as.numeric(ironthornResist[1])/as.numeric(bestResist[1])
+  
+  
+  anyShield <- damageCalc(monsterInfo, 0, 1)
+  ironThorn <- damageCalc(monsterInfo, -10, 1.5)
+  
+  ironthornDmgFactor <- round(max(ironThorn) /
+                                max(anyShield[, match(bestResist[2], colnames(anyShield))]), 2)
+  
+  output <- c(ironthornDmgFactor, ironthornResFactor, bestResist[2:3])
+  return(output)
+}
 
-ironthornDmgFactor <- round(max(ironThorn[, ironthornResist[2]]) /
-                        max(anyShield[, match(bestResist[2], colnames(anyShield))]), 2)
+monsterName <- "Fire Knight"
+findBestEquipment(monsterName)
 
-
-
-ironthornDmg <- cbind(data.frame(ironThorn[, ironthornResist[2]], row.names = rownames(ironThorn)),
-                      data.frame(anyShield[, match(bestResist[2], colnames(anyShield))]))
-colnames(ironthornDmg) <- c("ironthorn", "other")
-
-# plotDF <- melt(expectedDF, id = NULL)
-# colnames(plotDF) <- c("Weapon", "Armor", "Damage")
-# 
-# ggplot() + geom_tile(data = plotDF, aes(x = Weapon, y = Armor, fill = log10(Damage))) +
-#   scale_fill_gradient(low = "red", high = "blue")

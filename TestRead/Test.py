@@ -15,19 +15,17 @@ k = PyKeyboard()
 # m.move(x_dim/2, y_dim/2) # Move mouse to location
 
 # Give the user 3 seconds to get the window positioned for the attack button
-time.sleep(3)
+# time.sleep(3)
 #mouseX, mouseY = m.position()
-
-
 
 attackX = int(m.position()[0])
 attackY = int(m.position()[1])
 
 # Take a screenshot to define RGB of attack location
 im = pyscreeze.screenshot()
-attackR = pyscreeze.pixel(attackX, attackY)[0]
-attackG = pyscreeze.pixel(attackX, attackY)[1]
-attackB = pyscreeze.pixel(attackX, attackY)[2]
+attackR = pyscreeze.pixel(attackX*2, attackY*2)[0]
+attackG = pyscreeze.pixel(attackX*2, attackY*2)[1]
+attackB = pyscreeze.pixel(attackX*2, attackY*2)[2]
 #m.click(int(mouseX), int(mouseY), 1)
 #pyscreeze.pixel(m.position()[0], m.position()[1])
 
@@ -41,14 +39,14 @@ while reps in range(0, 3):
     im = pyscreeze.screenshot()
 
 # If there's white text at the attack site, click 'attack' and continue
-    if pyscreeze.pixelMatchesColor(attackX, attackY, (attackR, attackG, attackB), tolerance = 3):
+    if pyscreeze.pixelMatchesColor(attackX*2, attackY*2 (attackR, attackG, attackB), tolerance = 3):
         print("Click Attack")
         m.click(attackX, attackY, 1)
         time.sleep(15)
         
 # If it's the scroll background color, the battle is over
 # The scroll doesn't actually contribute to the color...
-    elif pyscreeze.pixelMatchesColor(attackX, attackY+150, (39, 36, 53), tolerance = 3):
+    elif pyscreeze.pixelMatchesColor(attackX*2, (attackY+150)*2, (39, 36, 53), tolerance = 3):
 # Click 'Next' twice in case of z-token
         m.click(attackX, attackY+230, 1)
         time.sleep(0.5)
