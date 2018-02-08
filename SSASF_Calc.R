@@ -3,7 +3,7 @@ require(dplyr)
 require(plyr)
 require(RColorBrewer)
 
-data <- read.csv("SSASF.csv", sep = ",", stringsAsFactors = FALSE)
+data <- read.csv("Bursaries_2013-Present.csv", sep = ",", stringsAsFactors = FALSE)
 data <- data[, 2:4]
 
 data$DATE.RECEIVED <- as.Date(data$DATE.RECEIVED, format = "%d/%m/%Y")
