@@ -170,51 +170,42 @@ specialCalc <- function(weapon, armor) {
   return(list(specialBTH, onlySpecial))
 }
 
-damageCalc <- function(bthMod, dmgMult, monsterName) {
+damageCalc <- function(bthMod, dmgMult, monsterInfo) {
   # Pull this for resists and MRM
-  monsterInfo <- getMonsterInfo(monsterName)
-  
-  attackDF <- t(data.frame(do.call(cbind, lapply(weaponCSV$Name, function(x)
-    c(sapply(armorCSV$Name, function(y)
-      round(unlist(attackCalc(x, y)[2]),1)*dmgMult))
-  ))))
-  attackDF <- data.frame(attackDF)
+  # monsterInfo <- getMonsterInfo(monsterName)
+  attackDF <- cbind.data.frame(lapply(weaponCSV$Name, function(x)
+              c(sapply(armorCSV$Name, function(y)
+                    round(unlist(attackCalc(x, y)[2]), 1)*dmgMult))))
   colnames(attackDF) <- armorCSV$Name
   attackDF$Weapon <- weaponCSV$Name
   rownames(attackDF) <- weaponCSV$Name
   attackDF$Type <- weaponCSV$Type
   attackDF$Element <- weaponCSV$Element
   
-  bthDF <- t(data.frame(do.call(cbind, lapply(weaponCSV$Name, function(x)
-    c(sapply(armorCSV$Name, function(y)
-      round(unlist(attackCalc(x, y)[1]),1)+bthMod))
-  ))))
-  bthDF <- data.frame(bthDF)
+  bthDF <- cbind.data.frame(lapply(weaponCSV$Name, function(x)
+              c(sapply(armorCSV$Name, function(y)
+                    round(unlist(attackCalc(x, y)[1]),1)+bthMod))))
   colnames(bthDF) <- armorCSV$Name
   bthDF$Weapon <- weaponCSV$Name
   rownames(bthDF) <- weaponCSV$Name
   
-  specialDF <- t(data.frame(do.call(cbind, lapply(weaponCSV$Name, function(x)
-    c(sapply(armorCSV$Name, function(y)
-      round(unlist(specialCalc(x, y)[2]),1)*dmgMult))
-  ))))
-  specialDF <- data.frame(specialDF)
+  specialDF <- cbind.data.frame(lapply(weaponCSV$Name, function(x)
+                    c(sapply(armorCSV$Name, function(y)
+                          round(unlist(specialCalc(x, y)[2]),1)*dmgMult))))
   colnames(specialDF) <- armorCSV$Name
   specialDF$Weapon <- weaponCSV$Name
   rownames(specialDF) <- weaponCSV$Name
   specialDF$Type <- weaponCSV$Type
   specialDF$Element <- weaponCSV$Element
   
-  specialBTH <- t(data.frame(do.call(cbind, lapply(weaponCSV$Name, function(x)
-    c(sapply(armorCSV$Name, function(y)
-      round(unlist(specialCalc(x, y)[1]),1)+bthMod))
-  ))))
-  specialBTH <- data.frame(specialBTH)
+  specialBTH <- cbind.data.frame(lapply(weaponCSV$Name, function(x)
+                c(sapply(armorCSV$Name, function(y)
+                          round(unlist(specialCalc(x, y)[1]),1)+bthMod))))
   colnames(specialBTH) <- armorCSV$Name
   specialBTH$Weapon <- weaponCSV$Name
   rownames(specialBTH) <- weaponCSV$Name
   
-  expectedDF <- as.data.frame(t(data.frame(do.call(cbind, lapply(1:nrow(attackDF), function(x) {
+  expectedDF <- cbind.data.frame(lapply(1:nrow(attackDF), function(x) {
     c(sapply(1:nrow(armorCSV), function(y) {
       weaponName <- rownames(attackDF)[x]
       weaponType <- weaponCSV$Type[match(weaponName, weaponCSV$Name)]
@@ -246,7 +237,7 @@ damageCalc <- function(bthMod, dmgMult, monsterName) {
       
       return(as.numeric(expectedSpecial) + as.numeric(expectedAttack))
     }))
-  })))))
+  }))
   
   colnames(expectedDF) <- armorCSV$Name
   rownames(expectedDF) <- weaponCSV$Name
@@ -260,8 +251,8 @@ damageCalc <- function(bthMod, dmgMult, monsterName) {
 #   # Calculate best player resistance to monster element.  Keep ironthorn separate
 #   armorResists <- armorCSV[colnames(armorCSV) == paste0("R", tolower(monsterInfo$monsterElement))]
 #   shieldResists <- shieldCSV[colnames(shieldCSV) == paste0("R", tolower(monsterInfo$monsterElement))]
-findBest <- function(monsterName) {
-  monsterInfo <- getMonsterInfo(monsterName)
+findBest <- function(monsterInfo) {
+  # monsterInfo <- getMonsterInfo(monsterName)
   
   # Calculate best player resistance to monster element.  Keep ironthorn separate
   
@@ -296,7 +287,8 @@ findBest <- function(monsterName) {
 }
 
 monsterName <- "Fire Knight"
-findBest(monsterName)
+fkInfo <- getMonsterInfo(monsterName)
+findBest(fkInfo)
 
 # =======
 #   bestResist <- c(as.numeric(min(charResists)),
