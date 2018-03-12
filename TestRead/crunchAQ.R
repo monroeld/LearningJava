@@ -254,15 +254,15 @@ damageCalc <- function(bthMod, dmgMult, monsterName) {
   return(expectedDF)
 }
 
-<<<<<<< HEAD
-findBestEquipment <- function(monsterName) {
+# findBestEquipment <- function(monsterName) {
+#   monsterInfo <- getMonsterInfo(monsterName)
+#   
+#   # Calculate best player resistance to monster element.  Keep ironthorn separate
+#   armorResists <- armorCSV[colnames(armorCSV) == paste0("R", tolower(monsterInfo$monsterElement))]
+#   shieldResists <- shieldCSV[colnames(shieldCSV) == paste0("R", tolower(monsterInfo$monsterElement))]
+findBest <- function(monsterName) {
   monsterInfo <- getMonsterInfo(monsterName)
   
-  # Calculate best player resistance to monster element.  Keep ironthorn separate
-  armorResists <- armorCSV[colnames(armorCSV) == paste0("R", tolower(monsterInfo$monsterElement))]
-  shieldResists <- shieldCSV[colnames(shieldCSV) == paste0("R", tolower(monsterInfo$monsterElement))]
-=======
-findBest <- function(monsterInfo) {
   # Calculate best player resistance to monster element.  Keep ironthorn separate
   
   # currently just saves the best value.  How do I want to relate resistances to damage?  Dmg / res?
@@ -270,14 +270,12 @@ findBest <- function(monsterInfo) {
   armorResists$Name <- armorCSV$Name
   shieldResists <- shieldCSV[colnames(shieldCSV) == paste0("R", tolower(monsterInfo$monsterElement))]
   shieldResists$Name <- shieldCSV$Name
->>>>>>> 0a79a14253e4dca88b39341219aec9109cce5468
   
   charResists <- data.frame(t(do.call(rbind, lapply(1:nrow(armorResists), function(x) {
     sapply(1:nrow(shieldResists), function(y)
       armorResists[x, 1] - shieldResists[y, 1] )}))), row.names = shieldCSV$Name)
   colnames(charResists) <- armorCSV$Name
   
-<<<<<<< HEAD
   bestResist <- c(min(charResists),
                   armorCSV$Name[match(min(armorResists[, 1]), armorResists[, 1])],
                   shieldCSV$Name[match(max(shieldResists[, 1]), shieldResists[, 1])])
@@ -298,48 +296,48 @@ findBest <- function(monsterInfo) {
 }
 
 monsterName <- "Fire Knight"
-findBestEquipment(monsterName)
+findBest(monsterName)
 
-=======
-  bestResist <- c(as.numeric(min(charResists)),
-                  armorResists$Name[match(min(armorResists[, 1]), armorResists[, 1])],
-                  shieldResists$Name[match(max(shieldResists[, 1]), shieldResists[, 1])])
-  
-  ironthornResist <- c(min(armorResists[, 1]) - shieldResists[match("Ironthorn", shieldCSV$Name), 1],
-                       armorResists$Name[match(min(armorResists[, 1]), armorResists[, 1])])
-  ironthornResFactor <- as.numeric(ironthornResist[1])/as.numeric(bestResist[1])
-  
-  anyShield <- damageCalc(monsterInfo, 0, 1)
-  ironThorn <- damageCalc(monsterInfo, -10, 1.5)
-
-  ifelse(max(anyShield) > max(ironThorn),
-        mostDMG <- c(max(anyShield), weaponCSV$Name[which(max(anyShield)==anyShield, arr.ind = TRUE)[1]],
-                      armorCSV$Name[which(max(anyShield)==anyShield, arr.ind = TRUE)[2]], "No Ironthorn"),
-        mostDMG <- c(max(ironThorn), weaponCSV$Name[which(max(ironThorn)==ironThorn, arr.ind = TRUE)[1]],
-                      armorCSV$Name[which(max(ironThorn)==ironThorn, arr.ind = TRUE)[2]], "Ironthorn"))
-  names(mostDMG) <- c("Expected Damage", "Weapon", "Armor", "Shield")
-
-  anyshieldRatio <- data.frame(sapply(1:nrow(anyShield), function(x) anyShield[x, ]/(armorResists[, 1] -
-    max(shieldCSV[, match(paste0("R", tolower(monsterInfo$monsterElement)), colnames(shieldCSV))]))))
-  colnames(anyshieldRatio) <- rownames(anyShield)
-  anyshieldRatio <- c(max(unlist(anyshieldRatio)),
-                          unlist(strsplit(names(which(unlist(anyshieldRatio) == max(unlist(t(anyshieldRatio))), arr.ind = TRUE)), "[.]")[[1]]))
-  
-  # Not right yet
-  ironthornRatio <- data.frame(sapply(1:nrow(ironThorn), function(x) ironThorn[x, ]/(armorResists[, 1] -
-                      shieldCSV[match("Ironthorn", shieldCSV$Name),
-                               match(paste0("R", tolower(monsterInfo$monsterElement)), colnames(shieldCSV))])))
-  colnames(ironthornRatio) <- rownames(ironThorn)
-  ironthornRatio <- c(max(unlist(ironthornRatio)),
-                      unlist(strsplit(names(which(unlist(ironthornRatio) == max(unlist(t(ironthornRatio))), arr.ind = TRUE)), "[.]")[[1]]))
-  
-  bestRatios <- rbind(ironthornRatio, anyshieldRatio)
-  colnames(bestRatios) <- c("DMG / Resists", "Weapon", "Armor")
-  
-  
-  
-  return(list(mostDMG, bestRatios))
-}
+# =======
+#   bestResist <- c(as.numeric(min(charResists)),
+#                   armorResists$Name[match(min(armorResists[, 1]), armorResists[, 1])],
+#                   shieldResists$Name[match(max(shieldResists[, 1]), shieldResists[, 1])])
+#   
+#   ironthornResist <- c(min(armorResists[, 1]) - shieldResists[match("Ironthorn", shieldCSV$Name), 1],
+#                        armorResists$Name[match(min(armorResists[, 1]), armorResists[, 1])])
+#   ironthornResFactor <- as.numeric(ironthornResist[1])/as.numeric(bestResist[1])
+#   
+#   anyShield <- damageCalc(monsterInfo, 0, 1)
+#   ironThorn <- damageCalc(monsterInfo, -10, 1.5)
+# 
+#   ifelse(max(anyShield) > max(ironThorn),
+#         mostDMG <- c(max(anyShield), weaponCSV$Name[which(max(anyShield)==anyShield, arr.ind = TRUE)[1]],
+#                       armorCSV$Name[which(max(anyShield)==anyShield, arr.ind = TRUE)[2]], "No Ironthorn"),
+#         mostDMG <- c(max(ironThorn), weaponCSV$Name[which(max(ironThorn)==ironThorn, arr.ind = TRUE)[1]],
+#                       armorCSV$Name[which(max(ironThorn)==ironThorn, arr.ind = TRUE)[2]], "Ironthorn"))
+#   names(mostDMG) <- c("Expected Damage", "Weapon", "Armor", "Shield")
+# 
+#   anyshieldRatio <- data.frame(sapply(1:nrow(anyShield), function(x) anyShield[x, ]/(armorResists[, 1] -
+#     max(shieldCSV[, match(paste0("R", tolower(monsterInfo$monsterElement)), colnames(shieldCSV))]))))
+#   colnames(anyshieldRatio) <- rownames(anyShield)
+#   anyshieldRatio <- c(max(unlist(anyshieldRatio)),
+#                           unlist(strsplit(names(which(unlist(anyshieldRatio) == max(unlist(t(anyshieldRatio))), arr.ind = TRUE)), "[.]")[[1]]))
+#   
+#   # Not right yet
+#   ironthornRatio <- data.frame(sapply(1:nrow(ironThorn), function(x) ironThorn[x, ]/(armorResists[, 1] -
+#                       shieldCSV[match("Ironthorn", shieldCSV$Name),
+#                                match(paste0("R", tolower(monsterInfo$monsterElement)), colnames(shieldCSV))])))
+#   colnames(ironthornRatio) <- rownames(ironThorn)
+#   ironthornRatio <- c(max(unlist(ironthornRatio)),
+#                       unlist(strsplit(names(which(unlist(ironthornRatio) == max(unlist(t(ironthornRatio))), arr.ind = TRUE)), "[.]")[[1]]))
+#   
+#   bestRatios <- rbind(ironthornRatio, anyshieldRatio)
+#   colnames(bestRatios) <- c("DMG / Resists", "Weapon", "Armor")
+#   
+#   
+#   
+#   return(list(mostDMG, bestRatios))
+# }
 
 findBest(getMonsterInfo("BURP"))
 
@@ -359,5 +357,3 @@ https://cran.r-project.org/web/packages/rPython/rPython.pdf
 # ironthornDmg <- cbind(data.frame(ironThorn[, ironthornResist[2]], row.names = rownames(ironThorn)),
 #                       data.frame(anyShield[, match(bestResist[2], colnames(anyShield))]))
 # colnames(ironthornDmg) <- c("ironthorn", "other")
-
->>>>>>> 0a79a14253e4dca88b39341219aec9109cce5468
