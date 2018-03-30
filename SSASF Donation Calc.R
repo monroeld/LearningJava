@@ -1,6 +1,7 @@
 require(plyr)
 require(dplyr)
 require(ggplot2)
+require(tidyverse)
 
 # Read, get columns we care about
 df <- read.csv("SSASF 2017 Donor List.csv", skip = 5, header = TRUE, stringsAsFactors = FALSE)
@@ -22,8 +23,9 @@ workingdf$Total <- cumsum(workingdf$Amount)
 workingdf <- separate(workingdf, Date, c("Year", "Month", "Day"), remove = FALSE)
 
 # Breakdown by year
-ggplot(data = (workingdf %>% group_by(Year) %>% summarise(sum(Amount))),
+byYear <- ggplot(data = (workingdf %>% group_by(Year) %>% summarise(sum(Amount))),
               aes(x = Year, y = `sum(Amount)`)) + geom_bar(stat = "identity") +
               ylab("Amount raised ($)")
 
 
+ggsave(plot = byYear, filename = "donations_by_year.jpg", width = 8, height = 6)
