@@ -1,0 +1,98 @@
+// This script uses a recursive display window to modify the TyphoonCrop rectangle.
+// 		In order to get ImageJ to do a "Preview" checkbox or update things in real-time,
+//		you have to write a plugin in Java.  The macro language just can't do that kind 
+//		of thing, from what I can tell.  And if it can, I don't know how to do it (yet?)
+
+//		So I wrote a compromise: Until the user selects the final option ("Analyze with
+//		these parameters"), the script reads in the values from the dialog box, rotates
+//		the image and/or re-draws the TyphoonCrop selection rectangle
+
+//		Short-term, you'll need to have a Typhoon image open with the same name as
+//		'imgName'. If this is the kind of thing that Alison appreciates (I think it's more
+//		reproducible, but that's another matter), I can flesh it out the rest of the way.
+//		It's also a little less cumbersome than using the recorder, though I'll need to
+//		fix the zoom after a rotation.
+
+
+imgName = "UNSEP1-FAM.gel";
+selectWindow(imgName);
+imgWidth = getWidth();
+imgHeight = getHeight();
+
+moveOn = 0;
+UserChoiceArray=newArray(1, 1, 1);
+
+x = 200;
+y = 300;
+cropwidth = 1020;
+cropheight = 1806;
+totalAngle = 0;
+
+run("Colors...", "selection=red");
+
+	
+
+// If the user hasn't clicked the "Set Parameters and Continue" option, keep on goin'
+while (moveOn != UserChoiceArray[2]) {
+
+	// Create a dialog box for image manipulation.
+	//	This one isn't quite as shiny as a preview checkbox would be, but it'll do!
+	Dialog.create("TyphoonCrop Rectangle Alignment");
+
+	// Add some info text about use
+	Dialog.setInsets(0, 0, 0);
+	Dialog.addMessage("Adjust the rectangle location and try again,");
+	Dialog.setInsets(0, 0, 0);
+	Dialog.addMessage("or set these parameters and continue analysis");
+
+	// Create sliders for all variables
+	Dialog.setInsets(0, 0, 0);
+	Dialog.addSlider("Rectangle x: ", 0, imgWidth-1020, x);
+	Dialog.setInsets(0, 0, 0);
+	Dialog.addSlider("Rectangle y: ", 0, imgHeight-1806, y);
+	Dialog.setInsets(0, 0, 0);
+	Dialog.addSlider("Rotate Image: ", -3.1, 3.1, 0);
+	
+	
+	
+	// Create a set of buttons where the user chooses if they're still testing
+	UserChoiceArray=newArray("Continue adjusting","Adjust Zoom / Window", "Crop with these parameters");
+	Dialog.setInsets(0, 50, 0);
+	Dialog.addRadioButtonGroup("", UserChoiceArray, 3, 1, "Continue adjusting");
+	Dialog.show();
+
+
+	// Retrieve dialog values for ROIGrid
+	x = Dialog.getNumber();
+	y = Dialog.getNumber();
+
+	//zoomVal = getZoom();
+
+	rotationAngle = Dialog.getNumber();
+	totalAngle = totalAngle + rotationAngle;
+
+
+	// Perform dialog operations
+			
+	run("Select All");
+	run("Rotate... ", "angle="+rotationAngle +" grid=1 interpolation=Bilinear enlarge");
+	makeRectangle(x, y, cropwidth, cropheight);
+	run("To Selection");	// Focus the window on the rectangle
+
+
+	moveOn = Dialog.getRadioButton();
+	
+	if (moveOn == UserChoiceArray[1]) {
+		setTool("hand");
+		waitForUser("Rectangle Alignment Paused", "Click 'OK' when you're finished adjusting the window.\nControl (or Command) +/- are handy zoom shortcuts!");
+		
+	}
+}
+
+
+// Set the results to these values so Linkage can inherit them
+run("Clear Results");
+setResult("X", 0, x);
+setResult("Y", 0, y);
+setResult("rotationAngle", 0, totalAngle);
+

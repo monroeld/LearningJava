@@ -1,0 +1,30 @@
+nROIs = 88;
+
+defaultArray = newArray(0);
+roiPlusRandom = newArray(0);
+cellCountArray = newArray(0);
+for (i = 1; i < nROIs+1; i++) {
+	defaultArray = Array.concat(defaultArray, false);
+	// Currently random, but later we'll fill it with the calculated cell counts
+	val = toString(i) + ": " + toString(floor(random*2));
+	roiPlusRandom = Array.concat(roiPlusRandom, val);
+}
+
+Dialog.create("Cell Count Adjustment");
+Dialog.addMessage("Check boxes where the cell count should be invalidated due to dust\nor other fluorescent debris that is altering the cell count");
+Dialog.addMessage("Boxes are labeled by 'ROI number : Cell count'");
+Dialog.addCheckboxGroup(8, nROIs/8, roiPlusRandom, defaultArray);
+Dialog.show();
+
+// Counts along rows first, then columns, just like the ROI Grid does
+outputArray = newArray(0);
+for (i = 0; i < nROIs; i++) {
+	outputArray = Array.concat(outputArray, Dialog.getCheckbox());
+}
+Array.print(outputArray);
+
+//for (i = 0; i < nROIs; i++) {
+//	if (outputArray[i] == 1) {
+//		cellCountArray[i] == "NoData";
+//	}
+//}

@@ -1,0 +1,445 @@
+---
+title: "Cell Data Reduction"
+author: "Radich-Paguirigan Single Cell Group"
+date: "2017"
+output: html_document
+---
+
+*****Click on the gear above and choose:  "Chunk Output in Console" before proceeding*******
+
+Initialize libraries
+```{r Load required modules}
+require(plyr); require(dplyr); require(tidyr); require(reshape2); require(ggplot2)
+require(ggExtra); require(ggrepel); require(gridExtra);  require(RColorBrewer); 
+require(rlist); require(stringr)
+options(stringsAsFactors = FALSE)
+```
+
+
+Directory Structure 
+```{r}
+output <- c("./ProcessedData/TabularData")
+outputFigs <- c("./ProcessedData/GraphicalData")
+cellInput <- c("./ProcessedData/OlympusCSVs")
+metadataDir <- c("./ProcessedData/TyphoonImages")
+
+ruleThemAll<- read.csv("./ProcessedData/TabularData/ruleThemAll.csv", 
+                       header = T, stringsAsFactors = T)
+```
+
+Metadata Import
+```{r Read in metadata and set basic variables}
+arrayList <- c("A1", "A2", "A3")
+
+runMetadata <- read.delim(paste0(metadataDir,"/runinfo.txt"))
+probeScheme <- runMetadata[grepl( "^chip.*", runMetadata[,1])>0,]
+
+ampFluor <- "FAM"; wtFluor <- "HEX"; mutFluor <- "Cy5"
+if (grepl(".*swap", probeScheme) == T) {
+    ampFluor <- "FAM"; wtFluor <- "Cy5"; mutFluor <- "HEX"}
+
+fluorList <- c(ampFluor, wtFluor, mutFluor)
+```
+
+```{r make a data frame to match pics to well ID and location}
+adjust_df_counts <- function(df, csvname, adjustmentDF) {
+  if (match(csvname, filenames) %in% adjustmentDF$Image) {
+    adjustmentSubset <- subset(adjustmentDF, Image == match(csvname, filenames))
+    df$Count <- sapply(df$X, function(y)
+                          ifelse(y %in% adjustmentSubset$ROINumber,
+                              adjustmentSubset$NewValue[match(y, adjustmentSubset$ROINumber)],
+                              df$Count[y]))
+  } else {
+    df$Count <- df$Count
+  }
+  return(df)
+}
+
+
+filenames <- list.files(path = cellInput, pattern = ".csv", full.names = T)
+images <- as.numeric(str_sub(gsub(".csv", "", filenames), -2,-1))
+cellData <- lapply(filenames, function(x) {
+  working <- read.csv(x, header = T)
+  test <- adjust_df_counts(working, x, adjustmentDF)
+  })
+
+
+names(cellData) <- images
+cellMelt <- melt(cellData, id = colnames(cellData[[1]]))
+colnames(cellMelt) <- c("imageWell", "cellCount", "imageId")
+cellMelt$ROIorder <- seq(1:3072)
+
+lookup <- data.frame(ROIorder = 1:3072)
+lookup$ArrayCol <- rep(c(rep(1:11, len = 88), rep(12:22, len = 88), 
+                         rep(23:33, len = 88), rep(34:44, len = 88), 
+                         rep(45:55, len = 88), rep(56:64, len = 144),
+                         rep(45:55, len = 88), rep(34:44, len = 88), 
+                         rep(23:33, len = 88), rep(12:22, len = 88), 
+                         rep(1:11, len = 88)), 3)
+lookup$ArrayRow <- rep(c(rep(1:8, each = 11, len = 440), 
+                         rep(1:8, each = 9),rep(9:16, each = 9), 
+                         rep(9:16, each = 11, len = 440)),3)
+lookup$estImageId <- c(rep(1:5, each = 88), rep(6:7, each = 72), 
+                       rep(8:17, each = 88), rep(18:19, each = 72), 
+                       rep(20:29, each = 88), rep(30:31, each = 72), 
+                       rep(32:36, each = 88))
+lookup$Array <- rep(c("A1", "A2", "A3"), each = 1024)
+lookup <- arrange(lookup, Array, ArrayRow, ArrayCol)
+lookup$Well <- seq(1:3072)
+fullMergeData <- join(lookup, cellMelt, by = "ROIorder", type = "left")
+cellsReadyToRoll <- select(fullMergeData, Well, cellCount)
+
+```
+
+
+This section updates the cell count values
+```{r Update cell count CSV}
+adjustmentFile <- list.files(path = paste0("./ProcessedData/"),
+                               pattern = "CellCountAdjustment")
+if (length(adjustmentFile) > 1) {
+  stop("There is more than one CellCountAdjustment.  Please make sure adjustmentDF will be defined properly before continuing.")
+} else if (length(adjustmentFile) == 0) {
+  stop("Are you sure you want to continue?  No CellCountAdjustment CSV detected.")
+}
+  
+adjustmentDF <- as.data.frame(read.csv(file = paste0("./ProcessedData/", adjustmentFile[1]),
+                                         head = TRUE, sep = ",",
+                                         stringsAsFactors = FALSE))
+
+
+
+# This function reads in the CSV outputs from the automatic ROI grid.
+#   It's got some artifacts that can be cleaned up once we're sure
+#   that this is how we want to analyze Olympus data
+read_df <- function(csvname) {
+  if (nrow(rawdf) %% rowsPerImage != 0) {
+    stop(paste(csvname, "does not have", rowsPerImage, "rows.  Go back and re-analyze it"))
+  }
+
+  # Call adjust_df
+  rawdf$Count <- adjust_df_counts(rawdf, csvname, adjustmentDF)
+  ncols <- nrow(rawdf)/rowsPerImage
+  df1 <- matrix(data = rawdf$Count, ncol = rowsPerImage, nrow = ncols)
+  df1 <- t(df1)
+    		    
+  return(df1)
+}
+  		  
+# Check the adjustment CSV for that image
+#   If it's there, check all the rows to see if their cell count needs to be modified
+adjust_df_counts <- function(df, csvname, adjustmentDF) {
+  if (match(csvname, filenames) %in% adjustmentDF$Image) {
+    adjustmentSubset <- subset(adjustmentDF, Image == match(csvname, filenames))
+    wellnum <- 
+    df$Count <- sapply(df$X, function(x)
+                          ifelse(x %in% adjustmentSubset$ROINumber,
+                              adjustmentSubset$NewValue[match(x, adjustmentSubset$ROINumber)],
+                              df$Count[x]))
+  } else {
+    df$Count <- df$Count
+  }
+}
+ 
+adjust_df_counts()
+
+```
+
+
+                                
+
+
+
+
+
+
+
+```{r}
+require(ggExtra); require(ggrepel); require(gridExtra);  require(RColorBrewer)
+require(shiny) ; require(miniUI); require(rlist); require(stringr)
+options(stringsAsFactors = FALSE)
+```
+
+Directory setup
+Sets up the directory structure for where to look for data, and where to save results.  
+This assumes that the raw data stored in the SR/si directory has been processed
+using the ImageJ macros and the processed data is in the grp/SDChipImageAnalysis 
+directory in an run/analysis - specific directory.  Also assumes that the output Olympus data has been processed using the ImageJ macros and the processed data is in a CellOutputData folder in this same working directory.  
+```{r Directories and RuleThemAll}
+runDate <- format(Sys.time(), "%Y%m%d-%H%M")
+output <- c(paste0("./CellOutputData-",runDate))
+dir.create(output, showWarnings = FALSE)
+metadataDir <- c("./Metadata")
+fluorInput <- c("./RawCSVs")
+cellInput <- c("./Olympus_Data/RawCSVs")
+
+writeLines(capture.output(sessionInfo()), 
+           paste(output,"/CellDR-sessionInfo.txt", sep = ""))
+
+inputDirs <- list.dirs(path = ".")[grep("/OutputData",list.dirs(path = "."))]
+inputDirs
+input <- inputDirs[1]  #Change this if you would prefer to use a different outputData Dir. 
+input
+whereisruleThemAll <- list.files(path = input, pattern = ".ruleThemAll.csv", full.names = TRUE)
+ruleThemAll<- read.csv(whereisruleThemAll, header = T, stringsAsFactors = T)
+```
+
+
+Metadata Import
+```{r Metadata}
+arrayList <- c("A1", "A2", "A3")
+runMetadata <- read.delim("runinfo.txt")
+probeScheme <- runMetadata[grepl( "^chip.*", runMetadata[,1])>0,]
+ampFluor <- "FAM"; wtFluor <- "HEX"; mutFluor <- "Cy5"
+if(grepl(".*swap", probeScheme)== T) {
+    ampFluor <- "FAM"; wtFluor <- "Cy5"; mutFluor <- "HEX"}
+fluorList <- c(ampFluor, wtFluor, mutFluor)
+```
+
+
+Read In Cell Data
+```{r Read in Cell Data}
+filenames <- list.files(path = cellInput, pattern = ".csv", full.names = T)
+images <- as.numeric(str_sub(gsub(".csv", "", filenames), -2,-1))
+cellData <- lapply(filenames, function(x) read.csv(x, header = T))
+names(cellData) <- images
+cellMelt <- melt(cellData, id = colnames(cellData[[1]]))
+colnames(cellMelt) <- c("imageWell", "cellCount", "imageId")
+cellMelt$ROIorder <- seq(1:3072)
+
+lookup <- data.frame(ROIorder = 1:3072)
+lookup$ArrayCol <- rep(c(rep(1:11, len = 88), rep(12:22, len = 88), 
+                         rep(23:33, len = 88), rep(34:44, len = 88), 
+                         rep(45:55, len = 88), rep(56:64, len = 144),
+                         rep(45:55, len = 88), rep(34:44, len = 88), 
+                         rep(23:33, len = 88), rep(12:22, len = 88), 
+                         rep(1:11, len = 88)), 3)
+lookup$ArrayRow <- rep(c(rep(1:8, each = 11, len = 440), 
+                         rep(1:8, each = 9),rep(9:16, each = 9), 
+                         rep(9:16, each = 11, len = 440)),3)
+lookup$estImageId <- c(rep(1:5, each = 88), rep(6:7, each = 72), 
+                       rep(8:17, each = 88), rep(18:19, each = 72), 
+                       rep(20:29, each = 88), rep(30:31, each = 72), 
+                       rep(32:36, each = 88))
+lookup$Array <- rep(c("A1", "A2", "A3"), each = 1024)
+lookup <- arrange(lookup, Array, ArrayRow, ArrayCol)
+lookup$Well <- seq(1:3072)
+fullMergeData <- join(lookup, cellMelt, by = "ROIorder", type = "left")
+cellsReadyToRoll <- select(fullMergeData, Well, cellCount)
+```
+
+Save the multirun df with HEX correction
+```{r write snowCone to file}
+write.csv(cellsReadyToRoll, file = paste0(output,"/", runDate, ".cellsReadyToRoll.csv"), row.names = F)
+```
+
+###Can stop here and use Multi-Run Analysis with .cellsReadyToRoll.csv
+
+```{r Merge cells with ruleThemAll}
+ruleThemAll <- join(ruleThemAll, cellsReadyToRoll, by = "Well")
+ruleThemAll$cellCount <- as.numeric(ruleThemAll$cellCount)
+```
+
+
+```{r Plot zygosities of cells}
+set1 <- brewer.pal(n = 9, "Set1")
+set3 <- brewer.pal(n = 12, "Set3")
+zygcolors <- c(set3[5], set3[10], set3[4], "black")
+
+zygBarPlot <- ggplot(data = ruleThemAll %>% filter(Zygosity != "UNCALLED" & CellCount == 1),
+                     aes(x = Zygosity, fill = Zygosity, group = Array), color = "black") +
+    geom_bar(aes(y = ..prop.., fill = factor(..x..))) + 
+    scale_fill_manual(values = zygcolors) + theme_bw() +
+    geom_text(aes(label = ..count.., y = ..prop..), stat = "count", vjust = -0.5) +
+    labs(x = "Zygosity", y = "Frequency") + theme(legend.position = "none") +
+    facet_grid(.~Array) 
+zygBarPlot
+```
+
+
+```{r Save zygBarPlot and dropoutTable}
+ggsave(paste0(outputFigs, "/zygBarPlot-singleCells.pdf"),
+       zygBarPlot,
+       width = 6, height = 6)
+```
+
+Failure rate calulations
+```{r Failure Rates}
+failureModes <- list(ruleThemAll %>% group_by(Array) %>% 
+                         filter(Filled == TRUE & AmpPos == TRUE & CellCount == 0) %>% 
+                         summarize(FalsePositives = n()))
+
+failureModes[[2]] <- ruleThemAll %>% group_by(Array) %>% 
+    filter(Filled == TRUE & AmpPos == FALSE & CellCount == 1) %>% 
+    summarize(FalseNegatives = n())
+
+failureModes[[3]] <- ruleThemAll %>% group_by(Array) %>% 
+    filter(Filled == TRUE & AmpPos == TRUE & CellCount == 1) %>% 
+    summarize(TruePositives = n())
+
+failureModes[[4]] <- ruleThemAll %>% group_by(Array) %>% 
+    filter(Filled == TRUE & AmpPos == FALSE & CellCount == 0) %>% 
+    summarize(TrueNegatives = n())
+
+failureModes[[5]] <- ruleThemAll %>% group_by(Array) %>% 
+    filter(Filled == FALSE) %>% summarize(EmptyWells = n())
+
+failureModes[[6]] <- ruleThemAll %>% group_by(Array) %>% 
+    filter(Filled == TRUE & CellCount > 1) %>% summarize(DoubletPlus = n())
+
+failureData <- join_all(failureModes, by = "Array", type = "left")
+
+failureData$FDR <- failureData$FalsePositives/(failureData$FalsePositives + failureData$TruePositives)
+failureData$FPR <- failureData$FalsePositives/(failureData$FalsePositives + failureData$TrueNegatives)
+failureData$FNR <- failureData$FalseNegatives/(failureData$FalseNegatives + failureData$TruePositives)
+```
+
+
+```{r Plot Failure Rates}
+failColors <- brewer.pal(6, "Accent")
+failurePlot <- melt(failureData %>% select(-c(FDR, FPR, FNR)), variable.name = "Mode", value.name = "WellCount")
+ggplot(data = failurePlot) + geom_bar(aes(x = Array, y = WellCount, fill = Mode), stat = "identity")  + scale_fill_manual(values = failColors)+theme_bw()
+```
+
+
+This makes an ArrayMap plot, faceted by Array
+```{r Array Map of Failure Modes}
+failureModes <- list(ruleThemAll %>% group_by(Array) %>% 
+                         filter(Filled == TRUE & AmpPos == TRUE & CellCount == 0) %>% 
+                         summarize(FalsePositives = n()))
+
+failureModes[[2]] <- ruleThemAll %>% group_by(Array) %>% 
+    filter(Filled == TRUE & AmpPos == FALSE & CellCount == 1) %>% 
+    summarize(FalseNegatives = n())
+
+failureModes[[3]] <- ruleThemAll %>% group_by(Array) %>% 
+    filter(Filled == TRUE & AmpPos == TRUE & CellCount == 1) %>% 
+    summarize(TruePositives = n())
+
+failureModes[[4]] <- ruleThemAll %>% group_by(Array) %>% 
+    filter(Filled == TRUE & AmpPos == FALSE & CellCount == 0) %>% 
+    summarize(TrueNegatives = n())
+
+failureModes[[5]] <- ruleThemAll %>% group_by(Array) %>% 
+    filter(Filled == FALSE) %>% summarize(EmptyWells = n())
+
+failureModes[[6]] <- ruleThemAll %>% group_by(Array) %>% 
+    filter(Filled == TRUE & CellCount > 1) %>% summarize(DoubletPlus = n())
+
+Failmapdf <- mutate(ruleThemAll, MapVal = NA)
+Failmapdf <- mutate(Failmapdf, MapVal = replace(MapVal, Filled == TRUE & AmpPos == TRUE & CellCount == 0, "FalsePositive"))
+Failmapdf <- mutate(Failmapdf, MapVal = replace(MapVal, Filled == TRUE & AmpPos == FALSE & CellCount == 1, "FalseNegative"))
+Failmapdf <- mutate(Failmapdf, MapVal = replace(MapVal, Filled == TRUE & AmpPos == TRUE & CellCount == 1, "TruePositive"))
+Failmapdf <- mutate(Failmapdf, MapVal = replace(MapVal, Filled == TRUE & AmpPos == FALSE & CellCount == 0, "TrueNegative"))
+Failmapdf <- mutate(Failmapdf, MapVal = replace(MapVal, Filled == TRUE & CellCount > 1, "DoubletPlus"))
+Failmapdf <- mutate(Failmapdf, MapVal = replace(MapVal, Filled == FALSE, "Empty"))
+
+
+Failmapdf$MapVal <- factor(Failmapdf$MapVal, levels = c("TruePositive", "TrueNegative", "FalsePositive", "FalseNegative", "DoubletPlus", "Empty"))
+
+
+failMapColors <- c("gold", "blue", "chocolate", "black", "lightgreen", "gray")
+
+Failmap <- ggplot() + theme(legend.position = "left") +
+  scale_x_continuous(minor_breaks = seq(4, 64, 4), breaks = seq(8, 64, 8)) +
+  labs(x = "Column", y = "Row", color = "Failure Modes") +
+  geom_point(data = Failmapdf, aes(x = ArrayCol, y = ArrayRow, color = MapVal), size = 2) +
+  scale_color_manual(values = c(failMapColors), limits = levels(Failmapdf$MapVal)) +
+  scale_y_reverse(limits = c(16, 1)) + facet_grid(Array~.) +
+  ggtitle(paste0("Failure Array Map")) 
+
+Failmap
+```
+
+Want to save a hard copy? Run this chunk!
+  It bases the height of the plot off the number of arrays being plotted
+```{r Save Array Map}
+ggsave(paste0(outputFigs, "/FailMap.pdf"), Failmap, width = 9,
+       height = 3*length(unique(Failmapdf$Array)))
+```
+
+```{r Save stats data}
+write.csv(failureData, file = paste0(output,"/failureRateResults.csv"), row.names = F)
+```
+
+```{r write out RuleThemAll}
+write.csv(ruleThemAll, file = paste0(output,"/cellRuleThemAll.csv"), row.names = F)
+```
+
+
+```{r Save stats data}
+write.csv(failureData, file = paste0(output,"/", runDate, ".failureRateResults.csv"), row.names = F)
+```
+
+Poisson Distribution calculations
+```{r Poisson Calculations}
+expLambda <- list(ruleThemAll %>% group_by(Array) %>% filter(Filled == TRUE) %>% 
+    summarize(TotalCounts = n()) )
+
+expLambda[[2]] <- ruleThemAll %>% group_by(Array) %>% filter(Filled == TRUE) %>% filter(CellCount == 0) %>% summarize(ZeroCells = n()) 
+
+expLambda[[3]] <- ruleThemAll %>% group_by(Array) %>% filter(Filled == TRUE) %>% filter(CellCount == 1) %>% summarize(OneCell = n()) 
+
+expLambda[[4]] <- ruleThemAll %>% group_by(Array) %>% filter(Filled == TRUE) %>% filter(CellCount > 1) %>% summarize(DoubletPlus = n()) 
+
+experimentalLambda <- join_all(expLambda, by = "Array", type = "left")
+
+experimentalLambda$ExpLambda <- -log(experimentalLambda$ZeroCells/experimentalLambda$TotalCounts)
+
+experimentalLambda$PredSingles <- experimentalLambda$TotalCounts* experimentalLambda$ExpLambda*exp(-experimentalLambda$ExpLambda)/1
+
+experimentalLambda$PredDoubPlus <- experimentalLambda$TotalCounts-experimentalLambda$ZeroCells - experimentalLambda$PredSingles
+```
+
+```{r View how close to Poisson it is}
+cellNumPlot <- melt(experimentalLambda %>% select(Array, ZeroCells, OneCell, DoubletPlus), variable.name = "Mode", value.name = "CellCount")
+ggplot(data = cellNumPlot) + geom_bar(aes(x = Array, y = CellCount, fill = Mode), stat = "identity") 
+```
+
+
+```{r Save Poisson data}
+write.csv(experimentalLambda, file = paste0(output,"/", runDate, ".poissionEstimateResults.csv"), row.names = F)
+```
+
+```{r write out cellRuleThemAll}
+write.csv(ruleThemAll, file = paste0(output,"/", runDate, ".cellRuleThemAll.csv"), row.names = F)
+>>>>>>> master:CellImagingAnalysis/CellDataReduction.Rmd
+```
+
+
+This makes an ArrayMap plot, faceted by Array
+```{r Zygosity Array Map}
+arraymapdf <- mutate(ruleThemAll, MapVal = NA)
+arraymapdf <- mutate(arraymapdf, MapVal = replace(MapVal, CellCount == 0, "NoCell"))
+arraymapdf <- mutate(arraymapdf, MapVal = replace(MapVal, CellCount == 1, "SingleNoZyg"))
+arraymapdf <- mutate(arraymapdf, MapVal = replace(MapVal, CellCount > 1, "DoubletPlus"))
+arraymapdf <- mutate(arraymapdf, MapVal = replace(MapVal, CellCount == 1 & Zygosity == "WT", "WT"))
+arraymapdf <- mutate(arraymapdf, MapVal = replace(MapVal, CellCount == 1 & Zygosity == "HET", "HET"))
+arraymapdf <- mutate(arraymapdf, MapVal = replace(MapVal, CellCount == 1 & Zygosity == "MUT", "MUT"))
+arraymapdf <- mutate(arraymapdf, MapVal = replace(MapVal, Filled == FALSE, "Empty"))
+
+arraymapdf$MapVal <- factor(arraymapdf$MapVal, levels = c("WT", "HET", "MUT", "NoCell", "SingleNoZyg", "DoubletPlus", "Empty"))
+
+cellMapColors <- c("dodgerblue4", "magenta4", "red3","white", "black", "lightgreen", "gray")
+
+Arraymap <- ggplot() + theme(legend.position = "left") +
+  scale_x_continuous(minor_breaks = seq(4, 64, 4), breaks = seq(8, 64, 8)) +
+  labs(x = "Column", y = "Row", color = "Type") +
+  geom_point(data = arraymapdf, aes(x = ArrayCol, y = ArrayRow, color = MapVal), size = 2) +
+  scale_color_manual(values = c(cellMapColors), limits = levels(arraymapdf$MapVal)) +
+  scale_y_reverse(limits = c(16, 1)) + facet_grid(Array~.) +
+  ggtitle(paste0("Zygosity and Cell Array Map")) 
+
+Arraymap
+```
+
+
+Want to save a hard copy? Run this chunk!
+  It bases the height of the plot off the number of arrays being plotted
+```{r Save Array Map}
+ggsave(paste0(outputFigs, "/CellMap.pdf"), Arraymap, width = 9,
+       height = 3*length(unique(arraymapdf$Array)))
+```
+
+
+
+

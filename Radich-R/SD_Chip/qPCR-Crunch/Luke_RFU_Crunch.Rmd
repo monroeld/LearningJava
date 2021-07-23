@@ -1,0 +1,179 @@
+
+---
+title: "qPCR processing"
+author: "Jordan Smith"
+date: "September 8, 2016"
+output: html_document
+---
+
+```{R import CSV}
+library(ggplot2); library(gridExtra)
+
+setwd("/Users/Luke/Desktop/")
+filename <- "2017-9-26_NRAS_Exon2_C35G-A_Gradient"
+
+data <- read.csv(file = paste(filename, ".csv", sep = ""), 
+                 header = T,
+                 #note: with CFX data, first 19 rows have run info, but no run data
+                 skip = 19)
+
+# problemwells <- c("A05", "A06", "A07", "A08", "A09", "B06", "C06", "C07", "C08", "C09", "D05", "D06", "D08")
+# for (i in 1:nrow(data)) {
+#   if (data[i, 1] %in% problemwells) {
+#     data <- data[-i, ]
+#   }
+# }
+```
+
+
+```{R Define tempGradient}
+#Separate the Well into wellCol and wellRow
+data$wellCol = substring(data$Well, 1, 1)
+data$wellRow = substring(data$Well, 2, 3)
+
+#Assign Mixes by Row
+# data$Mix[data$wellCol == "C"] <- "600 nM WT v2"
+# data$Mix[data$wellCol == "D"] <- "400 nM WT v2"
+
+#Assign Annealing Temp by Row
+data$Temp[data$wellCol == "A"] <- "64 dC"
+data$Temp[data$wellCol == "G"] <- "62 dC"
+data$Temp[data$wellCol == "J"] <- "60 dC"
+data$Temp[data$wellCol == "P"] <- "58 dC"
+
+
+```
+
+```{R calculate mean}
+#Calculate mean RFU
+RFU_df <- setNames(aggregate(data$End.RFU, 
+                             by=list(Sample=data$Sample, 
+                                     Fluor=data$Fluor,
+                                     Temp=data$Temp,
+                                     Target=data$Target), 
+                             data=data, 
+                             FUN=mean, 
+                             colnames = "MeanRFU"), 
+                   c("Sample", 
+                     "Fluor",
+                     "Temp",
+                     "Target",
+                     "MeanRFU"))
+```
+
+```{R spread by Target}
+#Note:  key = "The bare (unquoted) name of the column whose values will be used 
+#               as column headings.
+#       value = "The bare (unquoted) name of the column whose values will 
+#               populate the cells."
+library(dplyr)
+library(tidyr)
+#make tidy RFU table
+RFU_spread <- RFU_df %>% 
+    select(Sample, Target, Temp, MeanRFU) %>% 
+    spread(key = Target, value = MeanRFU)
+
+#order the rows
+row_order <- c("1e4 WT", 
+               "1e4 MUT",
+               "1e4 HET",
+               "1 ng KG1a",
+               "1 ng OCI",
+               "H2O")
+RFU_spread$Sample <- factor(RFU_spread$Sample, levels = row_order, ordered = TRUE)
+
+# Sort by Temp
+# RFU_AnnealOrder <- RFU_spread[order(RFU_spread$Temp, RFU_spread$Sample), ]
+
+# Sort by Mix
+RFU_AnnealOrder <- RFU_spread[order(RFU_spread$Sample, RFU_spread$Temp), ]
+
+
+```
+
+```{R save as .csv}
+#write RFU table
+write.csv(x = RFU_AnnealOrder, 
+            file = paste(filename, "_CRUNCHED.csv", sep = ""),
+            row.names = F)
+
+```
+
+```{R plot AlleleCall}
+FvH <- ggplot(data = RFU_spread, aes(x = Amp, y = WT, shape = factor(Sample))) +
+    geom_point(size = 3) + theme(legend.position="none") + 
+  labs(x= "FAM (Amp) End RFU", y = "HEX (WT) End RFU",
+       shape = "Sample", title = "FAM vs HEX") +
+  scale_shape_manual(values = c(15:18, 0:2, 3:4)) + facet_grid(Temp ~ .)
+
+FvC <- ggplot(data = RFU_spread, aes(x = Amp, y = MUT, shape = factor(Sample))) +
+  geom_point(size = 3) + theme(legend.position="none") + 
+  labs(x= "FAM (Amp) End RFU", y = "Cy5/TYE665 (MUT) End RFU",
+       shape = "Sample", title = "FAM vs Cy5") +
+  scale_shape_manual(values = c(15:18, 0:2, 3:4)) + facet_grid(Temp ~ .)
+
+HvC <- ggplot(data = RFU_spread, aes(x = MUT, y = WT, shape = factor(Sample))) +
+    geom_point(size = 3) +
+  labs(x= "Cy5/TYE665 (MUT) End RFU", y = "HEX (WT) End RFU",
+        shape = "Sample", title = "HEX vs Cy5") +
+  scale_shape_manual(values = c(15:18, 0:2, 3:4)) + facet_grid(Temp ~ .)
+
+pdf(paste(filename, ".pdf", sep = ""), width = 10.5, height=10)
+grid.arrange(FvH, FvC, HvC, ncol = 3, widths = c(3.5, 3.5, 5))
+dev.off()
+
+# + facet_grid(Mix ~ .)
+```
+
+```{r Get table of fluorescence differences}
+crunchedCSV <- RFU_AnnealOrder
+
+sampleList <- unique(crunchedCSV$Sample)
+mixColumn <- grep("Mix", colnames(crunchedCSV))
+
+generateDifferences <- function(mixVal) {
+  if (length(mixColumn) != 0) {
+    workingCSV <- subset(crunchedCSV, Mix == mixVal)
+  } else {
+    workingCSV <- crunchedCSV
+  }
+
+  NTCrows <- workingCSV[c(grep("H2O", sampleList), grep("PBS", sampleList)),
+                       c(grep("WT", colnames(workingCSV)),
+                         grep("MUT", colnames(workingCSV)),
+                         grep("Amp", colnames(workingCSV)))]
+
+  NTCvals <- as.data.frame(t(as.matrix(colMeans(NTCrows, na.rm = FALSE))))
+
+  ampMinusNTC <- mean(workingCSV$Amp[grep("WT", workingCSV$Sample)],
+                       workingCSV$Amp[grep("MUT", workingCSV$Sample)]) - NTCvals$Amp[1]
+  ampMinusHET <- workingCSV$Amp[grep("HET", workingCSV$Sample)]- NTCvals$Amp[1]
+
+  wtMinusNTC <- workingCSV$WT[grep("WT", workingCSV$Sample)] - NTCvals$WT
+  wtHETMinusNTC <- workingCSV$WT[grep("HET", workingCSV$Sample)] - NTCvals$WT
+  wtMinusMUT <- workingCSV$WT[grep("WT", workingCSV$Sample)] - 
+                    workingCSV$WT[grep("MUT", workingCSV$Sample)]
+
+  mutMinusNTC <- workingCSV$MUT[grep("MUT", workingCSV$Sample)] - NTCvals$MUT
+  mutHETMinusNTC <- workingCSV$MUT[grep("HET", workingCSV$Sample)] - NTCvals$MUT
+  mutMinusWT <- workingCSV$MUT[grep("MUT", workingCSV$Sample)] - 
+                    workingCSV$MUT[grep("WT", workingCSV$Sample)]
+
+  output <- as.data.frame(t(as.matrix(c(ampMinusNTC, wtMinusNTC, wtHETMinusNTC,
+                                      wtMinusMUT, mutMinusNTC, mutHETMinusNTC, mutMinusWT))))
+  colnames(output) <- c("Amp - NTC", "WT - NTC", "HET(HEX) - NTC", "WT - MUT", "MUT - NTC", "HET(Cy5) - NTC", "MUT - WT")
+  if (length(mixColumn) != 0) {
+    rownames(output) = mixVal
+  }
+  return(output)
+}
+
+if (length(mixColumn) != 0) {
+  test <- do.call(rbind, lapply(unique(crunchedCSV[, mixColumn]), function(x)
+                                generateDifferences(x)))
+}
+
+print(test)
+```
+
+

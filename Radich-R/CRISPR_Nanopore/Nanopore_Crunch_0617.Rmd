@@ -1,0 +1,292 @@
+---
+title: "NanoporeCrunch"
+output: html_document
+---
+
+```{r Libraries}
+library(tidyverse)
+library(gridExtra)
+library(reshape2)
+library(scales)
+```
+
+
+```{r Load csv}
+# Pick one!
+df <- read.csv("CRISPR_R050436_flipflop_merged_sorted_bed.csv", header = F, sep = ",", stringsAsFactors = F)
+refmat <- "R050436"
+
+
+colnames(df) <- c("Chr", "Chr_S", "Chr_E", "Name", "Score", "Strand")
+
+chr9lim <- 138400000
+chr13lim <- 11440000
+chr19lim <- 58600000
+chr22lim <- 50820000
+
+df <- df %>% mutate(Len = Chr_E - Chr_S) %>% filter(Score >= 10)
+```
+
+
+```{r Get dataframe of bridging reads (same read name, both 9 and 22) }
+# 9 / 22 for BCR-ABL, 13 for FLT3 ITD, 19 for CEBPA
+chr9reads <- unique(df$Name[df$Name %in% subset(df, Chr == "chr9")$Name])
+chr22reads <- unique(df$Name[df$Name %in% subset(df, Chr == "chr22")$Name])
+chr922reads <- intersect(chr9reads, chr22reads)
+chr922df <- df %>% filter(Name %in% chr922reads) %>% filter(Chr %in% c("chr9", "chr22"))
+
+# chr922df has one read that maps to three locations on chr9, all with good scores.  Take the longest for this patient?
+chr922df <- chr922df[-c(1, 3), ]
+
+
+chr13reads <- unique(df$Name[df$Name %in% subset(df, Chr == "chr13")$Name])
+chr13df <- df %>% filter(Name %in% chr13reads) %>% filter(Chr == "chr13")
+
+chr19reads <- unique(df$Name[df$Name %in% subset(df, Chr == "chr19")$Name])
+chr19df <- df %>% filter(Name %in% chr19reads) %>% filter(Chr == "chr19")
+
+```
+
+```{r All reads by location}
+chr9AllH <- ggplot(subset(chr922df, Chr == "chr9")) +
+                  geom_histogram(aes(x = Chr_E), bins = 200) + xlim(0, chr9lim) +
+                  xlab("Genomic Coordinates chr9") +
+                  ggtitle(paste0("Aligned reads, n = ", nrow(subset(df, Chr == "chr9"))))
+
+chr22AllH <- ggplot(subset(df, Chr == "chr22")) +
+                  geom_histogram(aes(x = Chr_S), bins = 200) + xlim(0, chr22lim) +
+                  xlab("Genomic Coordinates chr22") +
+                  ggtitle(paste0("Aligned reads, n = ", nrow(subset(df, Chr == "chr22"))))
+
+readHistAll <- grid.arrange(chr9AllH, chr22AllH, nrow = 2)
+
+# ggsave(paste0("readHist_", refmat, ".pdf"), readHistAll, width = 8, height = 6)
+
+```
+
+
+```{r KCL22 and KU812 cut sites}
+
+# KU812 and KCL22 guides, which are our new standard.  Uses GRCh37
+cutSites <- as.data.frame(t(data.frame(c("BCR1", "chr22", 23630389),
+                       c("BCR2", "chr22", 23630060),
+                       c("ABL11", "chr9", 133613086),
+                       c("ABL12", "chr9", 133655785),
+                       c("ABL13", "chr9", 133691503),
+                       c("ABL14", "chr9", 133730289),
+                       c("ABL15", "chr9", 133732446),
+                       c("CEBPA1", "chr19", 33786401),
+                       c("CEBPA2", "chr19", 33794671),
+                       c("FLT3F1", "chr13", 28609169),
+                       c("FLT3R1", "chr13", 28591129),
+                       c("FLT3R2", "chr13", 28590244)
+                       )), stringsAsFactors = F)
+
+rownames(cutSites) <- NULL
+colnames(cutSites) <- c("Name", "Chr", "Location")
+cutSites$Location <- as.numeric(cutSites$Location)
+
+window = 50
+
+
+
+# Find the number of unique reads within "window" of at least one cut site for BCR-ABL
+
+chr9Cuts <- chr922df %>% filter(Chr == "chr9") %>%
+  mutate(ABL11 = ifelse((abs(133613086-Chr_E) < window) |
+                          (abs(133613086-Chr_S) < window), 1, 0)) %>%
+  mutate(ABL12 = ifelse((abs(133655785-Chr_E) < window) |
+                          (abs(133655785-Chr_S) < window), 1, 0)) %>%
+  mutate(ABL13 = ifelse((abs(133691503-Chr_E) < window) |
+                          (abs(133691503-Chr_S) < window), 1, 0)) %>%
+  mutate(ABL14 = ifelse((abs(133730289-Chr_E) < window) |
+                          (abs(133730289-Chr_S) < window), 1, 0)) %>%
+  mutate(ABL15 = ifelse((abs(133732446-Chr_E) < window) |
+                          (abs(133732446-Chr_S) < window), 1, 0)) %>%
+  mutate(anyABL = ifelse(ABL11 | ABL12 | ABL13 | ABL14 | ABL15, 1, 0)) %>%
+  filter(anyABL == 1) %>% select(-Strand, -Score, -anyABL) %>%
+  mutate(ABL11 = ifelse(ABL11 != 0,
+                        ifelse(abs(133613086-Chr_E) > abs(133613086-Chr_S), "S", "E"), 0)) %>% 
+  mutate(ABL12 = ifelse(ABL12 != 0,
+                        ifelse(abs(133655785-Chr_E) > abs(133655785-Chr_S), "S", "E"), 0)) %>%
+  mutate(ABL13 = ifelse(ABL13 != 0,
+                        ifelse(abs(133691503-Chr_E) > abs(133691503-Chr_S), "S", "E"), 0)) %>% 
+  mutate(ABL14 = ifelse(ABL14 != 0,
+                        ifelse(abs(133730289-Chr_E) > abs(133730289-Chr_S), "S", "E"), 0)) %>%
+  mutate(ABL15 = ifelse(ABL15 != 0,
+                        ifelse(abs(133732446-Chr_E) > abs(133732446-Chr_S), "S", "E"), 0))
+
+
+ablCuts <- melt(chr9Cuts, id = c("Chr", "Chr_S", "Chr_E", "Name", "Len")) %>% filter(value != 0) %>%
+  group_by(variable) %>% summarise(n())
+
+
+chr22Cuts <- chr922df %>% filter(Chr == "chr22") %>%
+  mutate(BCR1 = ifelse((abs(23630389-Chr_E) < window) |
+                         (abs(23630389-Chr_S) < window), 1, 0)) %>%
+  mutate(BCR2 = ifelse((abs(23630060-Chr_E) < window) |
+                         (abs(23630060-Chr_S) < window), 1, 0)) %>%
+  mutate(anyBCR = ifelse(BCR1 | BCR2, 1, 0)) %>% filter(anyBCR == 1) %>%
+  select(-Strand, -Score, -anyBCR) %>%
+  mutate(BCR1 = ifelse(BCR1 != 0,
+                        ifelse(abs(23630389-Chr_E) > abs(23630389-Chr_S), "S", "E"), 0)) %>% 
+  mutate(BCR2 = ifelse(BCR2 != 0,
+                        ifelse(abs(23630060-Chr_E) > abs(23630060-Chr_S), "S", "E"), 0))
+
+bcrCuts <- melt(chr22Cuts, id = c("Chr", "Chr_S", "Chr_E", "Name", "Len")) %>% filter(value != 0) %>%
+  group_by(variable) %>% summarise(n())
+
+# length(unique(c(chr22Cuts$Name), c(chr9Cuts$Name)))
+
+
+```
+
+
+```{r CEBPA cuts}
+chr19Cuts <- chr19df %>% filter(Chr == "chr19") %>%
+  mutate(CEBPA1 = ifelse((abs(33786401-Chr_E) < window) |
+                          (abs(33786401-Chr_S) < window), 1, 0)) %>%
+  mutate(CEBPA2 = ifelse((abs(33794671-Chr_E) < window) |
+                          (abs(33794671-Chr_S) < window), 1, 0)) %>%
+  mutate(anyCEBPA = ifelse(CEBPA1 | CEBPA2, 1, 0)) %>%
+  filter(anyCEBPA == 1) %>% select(-Strand, -Score, -anyCEBPA)
+
+cebpaCuts <- melt(chr19Cuts, id = c("Chr", "Chr_S", "Chr_E", "Name")) %>% filter(value == 1) %>%
+  group_by(variable) %>% mutate(Len = Chr_E - Chr_S) %>% summarise(n())
+```
+
+```{r FLT3 cuts}
+chr13Cuts <- chr13df %>% filter(Chr == "chr13") %>%
+  mutate(FLT3F1 = ifelse((abs(28609169-Chr_E) < window) |
+                          (abs(28609169-Chr_S) < window), 1, 0)) %>%
+  mutate(FLT3R1 = ifelse((abs(28591129-Chr_E) < window) |
+                          (abs(28591129-Chr_S) < window), 1, 0)) %>%
+  mutate(FLT3R2 = ifelse((abs(28590244-Chr_E) < window) |
+                          (abs(28590244-Chr_S) < window), 1, 0)) %>%
+  mutate(anyFLT3 = ifelse(FLT3F1 | FLT3R1 | FLT3R2, 1, 0)) %>%
+  filter(anyFLT3 == 1) %>% select(-Strand, -Score, -anyFLT3)
+
+flt3Cuts <- melt(chr13Cuts, id = c("Chr", "Chr_S", "Chr_E", "Name")) %>% filter(value == 1) %>%
+  group_by(variable) %>% mutate(Len = Chr_E - Chr_S) %>% summarise(n())
+
+```
+
+
+```{r Get length of reads with cuts}
+# The next four bits are for the table Olga's using in the abstract
+
+
+# Total number of cuts by guides
+test9 <- df %>% filter(Chr == "chr9") %>%
+  mutate(ABL11 = ifelse((abs(133613086-Chr_E) < window) |
+                          (abs(133613086-Chr_S) < window), 1, 0)) %>%
+  mutate(ABL12 = ifelse((abs(133655785-Chr_E) < window) |
+                          (abs(133655785-Chr_S) < window), 1, 0)) %>%
+  mutate(ABL13 = ifelse((abs(133691503-Chr_E) < window) |
+                          (abs(133691503-Chr_S) < window), 1, 0)) %>%
+  mutate(ABL14 = ifelse((abs(133730289-Chr_E) < window) |
+                          (abs(133730289-Chr_S) < window), 1, 0)) %>%
+  mutate(ABL15 = ifelse((abs(133732446-Chr_E) < window) |
+                          (abs(133732446-Chr_S) < window), 1, 0)) %>%
+  mutate(anyABL = ifelse(ABL11 | ABL12 | ABL13 | ABL14 | ABL15, 1, 0)) %>%
+  filter(anyABL == 1) %>% select(-Strand, -Score, -anyABL)
+
+test9Cuts <- melt(test9, id = c("Chr", "Chr_S", "Chr_E", "Name", "Len")) %>% filter(value != 0) %>%
+  group_by(variable) %>% summarise(n())
+
+test22 <- df %>% filter(Chr == "chr22") %>%
+  mutate(BCR1 = ifelse((abs(23630389-Chr_E) < window) |
+                         (abs(23630389-Chr_S) < window), 1, 0)) %>%
+  mutate(BCR2 = ifelse((abs(23630060-Chr_E) < window) |
+                         (abs(23630060-Chr_S) < window), 1, 0)) %>%
+  mutate(anyBCR = ifelse(BCR1 | BCR2, 1, 0)) %>% filter(anyBCR == 1) %>% select(-Strand, -Score, -anyBCR)
+
+test22Cuts <- melt(chr22Cuts, id = c("Chr", "Chr_S", "Chr_E", "Name", "Len")) %>% filter(value != 0) %>%
+  group_by(variable) %>% summarise(n())
+
+print(paste0("Cuts by guides: ", sum(test9Cuts$`n()`, test22Cuts$`n()`)))
+
+# Reads on target with start at any cut site
+# Rerun above bits, but without "summarise"
+
+print(paste0("On-target, have cut: ", length(unique(c(test9Cuts$Name, test22Cuts$Name)))))
+
+# Reads with chr9 and chr22
+
+print(paste0("On both 9 and 22: ", length(unique(c(chr22Cuts$Name, chr9Cuts$Name)))))
+
+
+
+
+# Other crap
+
+chr9Cuts <- chr9Cuts %>% mutate(Len = Chr_E - Chr_S)
+
+chr22Cuts <- chr22Cuts %>% mutate(Len = Chr_E - Chr_S)
+
+bpOnTarget <- sum(chr9Cuts$Len) + sum(chr22Cuts$Len) + sum(chr13Cuts$Len) + sum(chr19Cuts$Len)
+
+print(paste0("Base Pairs on Target: ", bpOnTarget))
+
+
+
+# KCL22 and KU812
+# allCuts9 <- chr9Cuts %>% select(-ABL11, -ABL12, -ABL13, -ABL14, -ABL15)
+# allCuts22 <- chr22Cuts %>% select(-BCR1, -BCR2)
+
+# K562
+allCuts9 <- chr9Cuts %>% select(-ABLA1, -ABLA2)
+allCuts22 <- chr22Cuts %>% select(-BCRB1, -BCRB2)
+
+
+
+
+allCuts <- rbind(allCuts9, allCuts22) %>% select(-Chr_S, -Chr_E)
+
+allCuts <- spread(allCuts, key = "Chr", value = "Len") %>%
+      mutate(TotalLen = ifelse(!is.na(chr22), chr22, 0)+ifelse(!is.na(chr9), chr9, 0))
+
+
+spreadBridging <- bridging %>% filter(Score > 50) %>% select(-Chr_S, -Chr_E, -Score, -Strand)
+
+# spreadBridging <- spreadBridging[c(-157, -266), ]  # Weird ones for KCL22 run
+# spreadBridging <- spreadBridging[-55, ] # Weird one for KU812 run
+# spreadBridging <- spreadBridging[c(-16, -11, -13, -14, -23), ]  # Weird ones for K562 run
+
+spreadBridging <- spread(spreadBridging, key = "Chr", value = "Len") %>%
+      mutate(TotalLen = ifelse(!is.na(chr22), chr22, 0)+ifelse(!is.na(chr9), chr9, 0))
+
+summary(spreadBridging)
+
+```
+
+
+
+
+```{r Save a CSV of cuts per guide}
+guideTable <- rbind(ablCuts, bcrCuts)
+colnames(guideTable) <- c("Guide", "nCuts")
+write.csv(guideTable, paste0("guideTable_", refmat,".csv"))
+```
+
+
+```{r Plot cumulative reads by chromosome}
+# Show read start/end locations along chromosomes
+chr9 <- filter(df, Chr == "chr9")
+ggplot(data = chr9) + geom_histogram(aes(x = Chr_E), fill = "red", alpha = 0.5, bins = 1000) + ggtitle("Chr9")
+
+chr22 <- filter(df, Chr == "chr22")
+ggplot(data = chr22) + geom_histogram(aes(x = Chr_S), fill = "dark green", alpha = 0.5, bins = 1000) + ggtitle("Chr22")
+
+# Show cumulative read fraction by chromosome
+chr9 <- chr9[order(chr9$Chr_E), ]
+chr9$Total <- (1:nrow(chr9))/(nrow(chr9))
+chr9CumReads <- ggplot(data = chr9) + geom_point(aes(x = Chr_E, y = Total), size = 0.25) + ggtitle("Chr9 Cumulative Reads (n=2933)")
+
+chr22 <- chr22[order(chr22$Chr_S), ]
+chr22$Total <- (1:nrow(chr22))/(nrow(chr22))
+chr22CumReads <- ggplot(data = chr22) + geom_point(aes(x = Chr_S, y = Total), size = 0.25) + ggtitle("Chr22 Cumulative Reads (n=956)")
+
+cumReads <- grid.arrange(chr9CumReads, chr22CumReads, nrow = 2)
+ggsave(paste0("cumulativeReads_", refmat, ".pdf"), cumReads, width = 8, height = 6)
+```

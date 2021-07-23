@@ -1,0 +1,126 @@
+// This script reads in all .tif's in the same directory as the open image, assembles
+//		them into a composite image, searches for the Typhoon output folder and saves
+// 		the composite image to a subfolder
+
+server = "paguirigan_a";
+
+umPerPixel = 8.4816;
+
+// Figure out which directory style you'll need
+slash = "/";
+sysType = getInfo("os.name");
+if (indexOf(sysType, "Windows") != -1) {
+	slash = "\\";
+}
+
+print("\\Clear");
+
+// Define this script's directory and its parent
+scriptHome = File.getParent(getInfo("macro.filepath")) + slash;
+scriptParent = File.getParent(scriptHome) + slash;
+
+// This defines the input as the directory out of which the last file was opened
+imageName = getTitle();
+imageHome = getDirectory("image");
+imageParent = File.getParent(imageHome + imageName);
+
+
+// Get the list of files in the imageFolder
+fileList = getFileList(imageHome);
+imageList = newArray(0);
+for (i = 0; i < fileList.length; i++) {
+	if (indexOf(fileList[i], ".tif") >= 0) {
+		imageList = Array.concat(imageList, fileList[i]);
+	}
+}
+
+xyCoordFile = File.openAsString(File.getParent(File.getParent(imageParent)) + slash + "multipoints_16wellyoffset_3array_fillorder.csv");
+
+byLine = split(xyCoordFile, "\n");
+xArray = newArray(0);
+yArray = newArray(0);
+
+for (i = 0; i < byLine.length; i++) {
+	bySemicolon = split(byLine[i], ";");
+	xArray = Array.concat(xArray, parseFloat(bySemicolon[0])*1000);
+	yArray = Array.concat(yArray, parseFloat(bySemicolon[1])*1000);
+}
+
+xArray = Array.concat(xArray, 0);
+yArray = Array.concat(yArray, 0);
+
+Array.sort(imageList);
+
+revImageList = Array.reverse(imageList);
+
+// Create a new image onto which you're going to paste new ones
+newImage("finalImage", "16-bit white", 3180, 5450, 1);
+
+xStart = 2150;
+yStart = 4100;
+for (i = 0; i < imageList.length; i++) {
+	open(imageHome + imageList[i]);
+	//print(imageList[i]);
+	oldHeight = getHeight();
+	run("Rotate... ", "angle=-90 grid=1 interpolation=Bilinear enlarge");
+	imgWidth = getWidth();
+	imgHeight = getHeight();
+	makeRectangle((imgWidth-oldHeight)/2, 0, oldHeight, imgHeight);
+	run("Crop");
+	imgWidth = getWidth();
+	imgHeight = getHeight();
+	run("Select All");
+	run("Copy");
+	selectWindow("finalImage");
+	makeRectangle(xStart, yStart, imgWidth, imgHeight);
+	run("Paste");
+	run("Invert");
+	xStart = xStart + (yArray[i+1]-yArray[i])/umPerPixel;
+	yStart = yStart - (xArray[i+1]-xArray[i])/umPerPixel;
+	selectWindow(imageList[i]);
+	run("Close");
+}
+
+
+
+
+// Search the image's path for the server name
+imageParent = split(File.getParent(imageHome), slash);
+imageParent = imageParent[imageParent.length-1];
+
+nameEnd = indexOf(imageHome, server) + lengthOf(server);
+serverHome = substring(imageHome, 0, nameEnd) + slash;
+
+// Find the accompanying Typhoon data based on the date of the images' grandparent folder
+resultsBase = serverHome + "grp" + slash + "SDChipImageAnalysis" + slash;
+
+resultsFolder = newArray(0);
+resultList = getFileList(resultsBase);
+for (i = 0; i < resultList.length; i++) {
+	runDate = split(imageParent, "-");
+	runDate = runDate[0];
+	if (indexOf(resultList[i], runDate) >=0) {
+		resultsFolder = Array.concat(resultsFolder, resultList[i]);
+	}
+}
+
+
+// If there's more than one folder with that date (multiple chips, usually),
+//		make them choose the right one
+if (resultsFolder.length >= 2) {
+	Dialog.create("Choose output folder");
+	Dialog.addChoice("Run ID: ", resultsFolder);
+	Dialog.show();
+	resultsFolder = Dialog.getChoice();
+} else {
+	resultsFolder = resultsFolder[0];
+}
+
+
+// Define the output folder and save finalImage to it
+outputFolder = resultsBase + resultsFolder + "Olympus_Data" + slash;
+File.makeDirectory(outputFolder);
+selectWindow("finalImage");
+saveAs("tiff", outputFolder + "compositeImage.tif");
+File.copy(scriptHome + "ROIGrid_Olympus_dVals.txt", outputFolder + "ROIGrid_Olympus_dVals.txt");
+//run("Close All");

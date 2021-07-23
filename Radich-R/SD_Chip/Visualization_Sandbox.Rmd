@@ -1,0 +1,62 @@
+---
+title: "CompileCSV"
+author: "Luke Monroe"
+date: "November 18, 2016"
+output: html_document
+---
+
+This file creates plots based on CSV inputs in CompiledCSVs.
+
+
+
+Initialize libraries
+```{r Load yer modules, matey!}
+library(devtools)
+library(ggplot2)
+library(plotly)
+library(ggrepel)
+library(plyr)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+library(reshape2)
+library(RColorBrewer)
+```
+
+
+
+```{r Iris plotly example}
+p <- plot_ly(iris, x = ~Sepal.Width, y = ~Sepal.Length) 
+add_markers(p, color = ~Petal.Length, size = ~Petal.Length)
+add_markers(p, color = ~Species)
+add_markers(p, color = ~Species, colors = "Set1")
+add_markers(p, symbol = ~Species)
+```
+
+```{r Plotly URL example}
+data <- list(
+    list(
+        z = matrix(c(1, 20, 30, 50, 1, 20, 1, 60, 80, 30, 30, 60, 1, -10, 20), nrow=3, ncol=5), 
+        x = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday"), 
+        y = c("Morning", "Afternoon", "Evening"), 
+        type = "surface"
+    )
+)
+response <- py$plotly(data, kwargs=list(filename="3D surface", fileopt="overwrite"))
+url <- response$url  # returns plot URL
+```
+
+
+```{r Hypothetical zygosity plot}
+zyg3d <- plot_ly(ZygData, x = ~NPM1Zyg, y = ~FLT3Zyg, z = ~Counts)
+add_markers(zyg3d, color = ~WT1Zyg)
+
+data <- list(list(z = ZygData,
+             x = c("WT", "HET", "MUT"),
+             y = c("WT", "HET", "MUT"),
+             type = "surface"))
+
+response <- py$plotly(data, )
+
+```
+

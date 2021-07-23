@@ -1,0 +1,1376 @@
+---
+title: "CompileCSV"
+author: "Luke Monroe"
+date: "November 18, 2016"
+output: html_document
+---
+
+This version is on a train to crazy-town.  Three mutations?!  HOLD ON!
+
+Initialize libraries
+```{r Load yer modules, matey!}
+require(devtools)
+require(ggplot2)
+require(ggtern)
+require(plyr)
+require(dplyr)
+require(tidyr)
+require(gridExtra)
+require(reshape2)
+require(RColorBrewer)
+```
+
+Make sure to change basepath and the pertinent subfolders
+```{r Just some standard directory stuff.  Nothing to see here, move along now}
+histalpha <- 0.45
+scatteralpha <- histalpha * 2/3
+
+options(stringsAsFactors = FALSE)
+
+serverbasepath = "/Volumes/paguirigan_a/DiversityVisualizations/"
+NPM1input = paste0(serverbasepath, "Pre-2017-SCdata/")
+FLT3ITDinput = paste0(serverbasepath, "FLT3-D835-SCData/")
+Patient7input = "/Volumes/paguirigan_a/user/lmonroe/"
+
+lappend <- function(lst, obj) {
+  lst[[length(lst)+1]] <- obj
+  return(lst)
+}
+```
+
+Read the dater dots.  You can do it!
+```{r Read dataframe}
+NPM1file <- "NPM1FLT3SCDATA.csv"
+FLT3ITDfile <- "FLT3ITDSCDATA.csv"
+Patient7file <- "Patient7_Cleaned.csv"
+
+filename <- Patient7file
+if (filename == NPM1file) {
+  setwd(NPM1input)
+} else if (filename == FLT3ITDfile) {
+  setwd(FLT3ITDinput)
+} else if (filename == Patient7file) {
+  setwd(Patient7input)
+}
+SCdata <- as.data.frame(read.csv(filename, head=TRUE, sep = ",", stringsAsFactors=FALSE))
+```
+
+Do some modifications to the data frame
+  Count values from individual plates / runs / whatever -> Percent of total ("Mean")
+  Do stat things to get a value for each genotype's 95% confidence interval -> "CI95"
+  Split genotypes up from "GENOTYPE" column to individual ones (manual naming required)
+```{r NPM1 and FLT3 genotype columns}
+# Define some dropout rates.  You have to enter these manually
+AD_NPM1a_MUT <- 5.79
+AD_NPM1a_WT <- 3.3
+NPM1aAD <- t(as.data.frame(c(AD_NPM1a_WT, AD_NPM1a_MUT),
+                           col.names = NULL, row.names = c("WT", "MUT")))
+
+AD_FLT3ITD_MUT <- 6.47
+AD_FLT3ITD_WT <- 4.32
+FLT3ITDAD <- t(as.data.frame(c(AD_FLT3ITD_WT, AD_FLT3ITD_MUT),
+                             col.names = NULL, row.names = c("WT", "MUT")))
+
+# Mutate doesn't play well with strsplit's output, so this is done iteratively
+for (i in 1:nrow(SCdata)) {
+  SCdata$NPM1a[i] <- strsplit(SCdata$GENOTYPE, "")[[i]][1]
+  SCdata$FLT3ITD[i] <- strsplit(SCdata$GENOTYPE, "")[[i]][3]
+  SCdata$WT1[i] <- strsplit(SCdata$GENOTYPE, "")[[i]][2]
+}
+SCdata <- subset(SCdata, select = -c(GENOTYPE))
+
+# FLT3 ITD mutation was previously labelled "I" instead of "M" to differentiate
+#    the long and short ITDs, but this particular patient doesn't have both kinds
+#    so there's not much point in building it in until we get data that does
+SCdata <- mutate(SCdata, FLT3ITD=replace(FLT3ITD, FLT3ITD=="I","M"))
+
+SCdata <- mutate(SCdata, Plt1percent = Plt1/sum(Plt1)*100)
+SCdata <- mutate(SCdata, Plt2percent = Plt2/sum(Plt2)*100)
+SCdata <- mutate(SCdata, Plt3percent = Plt3/sum(Plt3)*100)
+SCdata <- mutate(SCdata, Plt4percent = Plt4/sum(Plt4)*100)
+
+celltotal <- sum(SCdata$Plt1, SCdata$Plt2, SCdata$Plt3, SCdata$Plt4)/100
+
+
+# Both "Percent" and "Counts" are mean data.  Let's get StD for SE calculations later
+for (i in 1:nrow(SCdata)) {
+  SCdata$StD[i] <- sd(c(SCdata$Plt1percent[i], SCdata$Plt2percent[i],
+                        SCdata$Plt3percent[i], SCdata$Plt4percent[i]))/100
+  SCdata$Percent[i] <- mean(c(SCdata$Plt1percent[i], SCdata$Plt2percent[i],
+                        SCdata$Plt3percent[i], SCdata$Plt4percent[i]))
+}
+
+pointsize = 3.5
+plotwidth = 8
+plotheight = 6
+plotalpha = 0.7
+
+```
+
+
+Function to create ternarydf based on the ternary graph's base locus and two secondary loci
+```{r}
+createcountdf <- function(baselocus, locus2, locus3) {
+  charcols <- c(unlist(sapply(colnames(SCdata), function(x)
+              if (x %in% c(baselocus, locus2, locus3))
+                { match(x, colnames(SCdata)) })))
+  ternarydf <- subset(SCdata, select = c(charcols, Counts, StD))
+  baselocuscol <- match(baselocus, colnames(ternarydf))
+  locus2col <- match(locus2, colnames(ternarydf))
+  locus3col <- match(locus3, colnames(ternarydf))
+  
+  # Combine genotype possibilities of locus2 and locus3
+  ternarydf <- cbind(ternarydf,
+                     do.call(paste, c(ternarydf[c(locus2, locus3)], sep = "-")))
+  colnames(ternarydf)[6] <- paste0(locus2, "-", locus3)
+  
+  ternarydf$Percents <- c(sapply(unique(ternarydf[, baselocuscol]), function(x)
+                      subset(ternarydf, get(baselocus) == x)$Counts /
+                          sum(subset(ternarydf, get(baselocus) == x)$Counts)
+                      ))
+  # ternarydf <- ternarydf[, c(baselocuscol, 4:7)]
+  return(ternarydf)
+}
+
+
+
+createzygositydf <- function(baselocus, locus2, locus3) {
+  df <- createcountdf(baselocus, locus2, locus3)
+  baselocuscol <- match(baselocus, colnames(df))
+  locus2col <- match(locus2, colnames(df))
+  locus3col <- match(locus3, colnames(df))
+
+  ternarydfPercents <- do.call(cbind, lapply(unique(df[, baselocuscol]), function(x)
+      subset(df, get(baselocus) == x)$Percents))
+  ternarydfStDs <- do.call(cbind, lapply(unique(df[, baselocuscol]), function(x)
+      subset(df, get(baselocus) == x)$StD))
+  ternarydf <- data.frame(cbind(ternarydfPercents, ternarydfStDs,
+                     df[1:(nrow(df)/length(unique(df[, baselocuscol]))), locus2col],
+                     df[1:(nrow(df)/length(unique(df[, baselocuscol]))), locus3col]))
+  colnames(ternarydf) <- c(paste0(baselocus, unique(df[, baselocuscol])), 
+                           paste0("StD", unique(df[, baselocuscol])),
+                           colnames(df)[locus2col], colnames(df)[locus3col])
+  
+  ternarydf[, 1:6] <- sapply(colnames(ternarydf)[!(colnames(ternarydf) %in% c(locus2, locus3))],
+                            function(x)
+                            sapply(1:nrow(ternarydf), function(y)
+                                  round(as.numeric(ternarydf[y, grep(x, colnames(ternarydf))]),
+                                        digits = 4)))
+  return(ternarydf)
+
+}
+
+NPM1aBase <- createzygositydf("NPM1a", "FLT3ITD", "WT1")
+
+NPM1a <- ggtern(NPM1aBase, aes(NPM1aW, NPM1aM, NPM1aH)) +
+  scale_shape_manual(values = c(15:17)) +
+  geom_point(aes(color = get(locus2),
+                 shape = get(locus3)),
+             alpha = plotalpha) +
+  ggtitle("Patient 7", subtitle = "Four-plate aggregate data \n\nBase Mutation: NPM1") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = paste0(locus2, "\nZygosity"),
+       shape = paste0(locus3, "\nZygosity "),
+       size = "Percent \nof Cells") +
+  theme_showarrows()
+NPM1a
+
+# setwd(Patient7input)
+# pdf("NPM1a_Ternary_PopSizes.pdf", width = plotwidth, height = plotheight)
+# NPM1aPop
+# dev.off()
+```
+
+```{r Should this be turned into a function?}
+
+# # Define your loci.  You chose baselocus, but it does the rest for you
+# #   "locusncol" contains indices corresponding to the names in otherloci.  The
+# #   former is increased by one so there's no confusion of locus1 vs. baselocus
+# allloci <- subset(colnames(ternarydf), colnames(ternarydf) != "Counts" &
+#                                       colnames(ternarydf) != "StD")
+# baselocuscol <- match(baselocus, colnames(ternarydf))
+# otherloci <- setdiff(allloci, baselocus)
+# for (i in 1:length(otherloci)) {
+#   assign(paste0("locus", i+1, "col"), match(otherloci[i], colnames(ternarydf)))
+#   assign(paste0("locus", i+1), otherloci[i])
+# }
+# 
+# 
+# 
+# # For each zygosity in the base locus, make a vector of cell counts and assign it
+# #   to a row in a matrix.  This sets baselocus zygosities as the columns and
+# #   otherloci zygosities (for each gene) as the rows, with Counts as the values
+# for (i in unique(ternarydf[, baselocuscol])) {
+#   basesubset <- subset(ternarydf, ternarydf[, baselocuscol] == i)
+#   countvector <- basesubset$Counts
+#   countvector <- as.matrix(countvector)
+#   rownames(countvector) <- paste0(locus2, "-", basesubset[, locus2col],
+#                                   "_", locus3, "-", basesubset[, locus3col])
+#   colnames(countvector) <- paste0(baselocus, i)
+#   if (i == unique(ternarydf[, baselocuscol])[1]) {
+#     countdf <- countvector
+#   } else {
+#     countdf <- cbind(countdf, countvector)
+#   }
+# }
+# countdf <- as.data.frame(countdf)
+# 
+# # Store the names of the base locus' zygosities as paste0(baselocus,zyg)
+# for (i in 1:length(unique(ternarydf[, baselocuscol]))) {
+#   assign(paste0("baselocuszyg", i),
+#          paste0(baselocus, unique(ternarydf[, baselocuscol])[i]))
+# }
+# 
+# 
+# # For geom_point(aes()) to work properly, we need otherloci's zygosities as columns
+# 
+# # Row names are currently of the form [locus2]-[locus2zyg]_[locus3]-[locus3zyg]
+# # The inner strsplit separates otherloci genes via "_".
+# #   The outer strsplit separates otherloci zygosities via "-".  This is added
+# #   to a vector that is cbinded (cbound?) to countdf
+# countdfcolnum <- ncol(countdf)
+# locus2zyg <- c()
+# locus3zyg <- c()
+# for (i in 1:nrow(countdf)) {
+#   locus2zyg <- c(locus2zyg,
+#                  strsplit(strsplit(rownames(countdf)[i], "_")[[1]][1], "-")[[1]][2])
+#   locus3zyg <- c(locus3zyg,
+#                  strsplit(strsplit(rownames(countdf)[i], "_")[[1]][2], "-")[[1]][2])
+# }
+# countdfnames <- colnames(countdf)
+# countdf <- cbind(countdf, locus2zyg, locus3zyg)
+# colnames(countdf) <- c(countdfnames, paste0(locus2, "zyg"), paste0(locus3, "zyg"))
+# rownames(countdf) <- NULL
+# 
+# 
+# 
+# 
+# # Values in each baselocus zygosity column are changed to percentages
+# #   so they can be plotted on the ternary, but their sum is saved for sizing.
+# #   Those chunks of awful are a way to mutate based on variable column names
+# for (i in 1:nrow(countdf)) {
+#   countdf$CellNum[i] <- sum(countdf[i, grepl(baselocus, colnames(countdf))])
+#   countdf[i, grep(baselocuszyg1, colnames(countdf))] <-
+#                   countdf[i, grep(baselocuszyg1, colnames(countdf))] / countdf$CellNum[i]*100
+#   countdf[i, grep(baselocuszyg2, colnames(countdf))] <-
+#                   countdf[i, grep(baselocuszyg2, colnames(countdf))] / countdf$CellNum[i]*100
+#   countdf[i, grep(baselocuszyg3, colnames(countdf))] <-
+#                   countdf[i, grep(baselocuszyg3, colnames(countdf))] / countdf$CellNum[i]*100
+# }
+
+
+# In order to plot the Confidence Interval's ring, we need to create a single
+#   value for it - we currently have an error value in each possible zygosity
+#   Confidence interval = mean +- MSE*t(0.025, df = 8)
+#   CI95 = mean +- 2.26
+
+# locus2zygcol <- grep(locus2, colnames(countdf))
+# locus3zygcol <- grep(locus3, colnames(countdf))
+# 
+# for (i in unique(countdf[, locus2zygcol])) {
+#   for (j in unique(countdf[, locus3zygcol])) {
+#     SEsubset <- subset(ternarydf, ternarydf[, locus2col] == i & ternarydf[, locus3col] == j)
+#     adjCI95 <- 1.96*sqrt(sum((SEsubset$StD)^2))/sqrt(4)
+#     countdfrow <- which(countdf[, locus2zygcol] == i & countdf[, locus3zygcol] == j)
+#     countdf$CI95[countdfrow] <- adjCI95
+#   }
+# }
+
+
+# Save a version with this name for calling later.  Countdf is just a working file
+# assign(paste0(baselocus, "countdf"), countdf)
+
+
+# Now that we've got our confidence intervals as part of countdf, make
+#   a separate dataframe with the confidence interval hexagon vertices' locations.
+# Also, ggtern is dumb: it says the z-coordinates of a point/segment are required
+#   but warns they're not used when they're actually plotted
+countdfbasezyg1 <- grep(baselocuszyg1, colnames(countdf))
+countdfbasezyg2 <- grep(baselocuszyg2, colnames(countdf))
+countdfbasezyg3 <- grep(baselocuszyg3, colnames(countdf))
+for (i in 1:nrow(countdf)) {
+  WT <- countdf[i, countdfbasezyg1]
+  MUT <- countdf[i, countdfbasezyg2]
+  HET <- countdf[i, countdfbasezyg3]
+  CI <- countdf$CI95[i]
+  CIvec <- c(WT-CI, MUT+CI/2, HET+CI/2,
+             WT-CI/2, MUT-CI/2, HET+CI,
+             WT+CI/2, MUT-CI, HET+CI/2,
+             WT+CI, MUT-CI/2, HET-CI/2,
+             WT+CI/2, MUT+CI/2, HET-CI,
+             WT-CI/2, MUT+CI, HET-CI/2)
+  if (i == 1) {
+    CIdf <- CIvec
+  } else {
+    CIdf <- rbind(CIdf, CIvec)
+  }
+}
+colnames(CIdf) <- c("Lminx", "Lminy", "Lminz",
+                    "Rmaxx", "Rmaxy", "Rmaxz",
+                    "Tminx", "Tminy", "Tminz",
+                    "Lmaxx", "Lmaxy", "Lmaxz",
+                    "Rminx", "Rminy", "Rminz",
+                    "Tmaxx", "Tmaxy", "Tmaxz")
+CIdf <- as.data.frame(CIdf)
+rownames(CIdf) <- NULL
+
+assign(paste0(baselocus, "CIdf"), CIdf)
+
+
+# Let's make a dataframe that accounts for CI and Allele Dropout!
+#   Values are plot percents, NOT percentages by which to scale coordinates.
+
+for (i in 1:nrow(countdf)) {
+  WT <- countdf[i, countdfbasezyg1]
+  MUT <- countdf[i, countdfbasezyg2]
+  HET <- countdf[i, countdfbasezyg3]
+  WTDO <- get(paste0(baselocus, "AD"))[1]
+  MUTDO <- get(paste0(baselocus, "AD"))[2]
+  CI <- countdf$CI95[i]
+  ADCIvec <- c((WT-CI)*(1-MUTDO/100), (MUT+CI/2)*(1-WTDO/100), (HET+CI/2)*(1+WTDO/100+MUTDO/100),
+             (WT-CI/2)*(1-MUTDO/100), (MUT-CI/2)*(1-WTDO/100), (HET+CI)*(1+WTDO/100+MUTDO/100),
+             (WT+CI/2)*(1-MUTDO/100), (MUT-CI)*(1-WTDO/100), (HET+CI/2)*(1+WTDO/100+MUTDO/100),
+             (WT+CI)*(1-MUTDO/100), (MUT-CI/2)*(1-WTDO/100), (HET-CI/2)*(1+WTDO/100+MUTDO/100),
+             (WT+CI/2)*(1-MUTDO/100), (MUT+CI/2)*(1-WTDO/100), (HET-CI)*(1+WTDO/100+MUTDO/100),
+             (WT-CI/2)*(1-MUTDO/100), (MUT+CI)*(1-WTDO/100), (HET-CI/2)*(1+WTDO/100+MUTDO/100))
+  if (i == 1) {
+    ADCIdf <- ADCIvec
+  } else {
+    ADCIdf <- rbind(ADCIdf, ADCIvec)
+  }
+}
+
+colnames(ADCIdf) <- c("Lminx", "Lminy", "Lminz",
+                    "Rmaxx", "Rmaxy", "Rmaxz",
+                    "Tminx", "Tminy", "Tminz",
+                    "Lmaxx", "Lmaxy", "Lmaxz",
+                    "Rminx", "Rminy", "Rminz",
+                    "Tmaxx", "Tmaxy", "Tmaxz")
+ADCIdf <- as.data.frame(ADCIdf)
+rownames(ADCIdf) <- NULL
+
+assign(paste0(baselocus, "ADCIdf"), ADCIdf)
+
+```
+
+
+Choose gene for which to create dataframe
+```{r}
+# Manually choose your base locus
+baselocus <- "FLT3ITD"
+```
+
+
+Make countdf, CIdf, CIADdf.
+  The creation is currently generalized - all that needs to be defined is
+  baselocus.  Using that column, a few data characteristics,
+  and assuming a preset structure of SCdata
+```{r Should this be turned into a function?}
+# Limit it to the data that really matter: gene zygosities, counts, and CI95.
+#   The other stuff can fart around in an unused DF for now
+
+# Get a list of zygosity column indices by finding columns with characters
+charcols <- c()
+for (i in 1:ncol(SCdata)) {
+  if (is.character(SCdata[1, i])) {
+    charcols <- c(charcols, i)
+  }
+}
+ternarydf <- subset(SCdata, select = c(charcols, Counts, StD))
+
+# Define your loci.  You chose baselocus, but it does the rest for you
+#   "locusncol" contains indices corresponding to the names in otherloci.  The
+#   former is increased by one so there's no confusion of locus1 vs. baselocus
+allloci <- subset(colnames(ternarydf), colnames(ternarydf) != "Counts" &
+                                      colnames(ternarydf) != "StD")
+baselocuscol <- match(baselocus, colnames(ternarydf))
+otherloci <- setdiff(allloci, baselocus)
+for (i in 1:length(otherloci)) {
+  assign(paste0("locus", i+1, "col"), match(otherloci[i], colnames(ternarydf)))
+  assign(paste0("locus", i+1), otherloci[i])
+}
+
+
+
+# For each zygosity in the base locus, make a vector of cell counts and assign it
+#   to a row in a matrix.  This sets baselocus zygosities as the columns and
+#   otherloci zygosities (for each gene) as the rows, with Counts as the values
+for (i in unique(ternarydf[, baselocuscol])) {
+  basesubset <- subset(ternarydf, ternarydf[, baselocuscol] == i)
+  countvector <- basesubset$Counts
+  countvector <- as.matrix(countvector)
+  rownames(countvector) <- paste0(locus2, "-", basesubset[, locus2col],
+                                  "_", locus3, "-", basesubset[, locus3col])
+  colnames(countvector) <- paste0(baselocus, i)
+  if (i == unique(ternarydf[, baselocuscol])[1]) {
+    countdf <- countvector
+  } else {
+    countdf <- cbind(countdf, countvector)
+  }
+}
+countdf <- as.data.frame(countdf)
+
+# Store the names of the base locus' zygosities as paste0(baselocus,zyg)
+for (i in 1:length(unique(ternarydf[, baselocuscol]))) {
+  assign(paste0("baselocuszyg", i),
+         paste0(baselocus, unique(ternarydf[, baselocuscol])[i]))
+}
+
+
+# For geom_point(aes()) to work properly, we need otherloci's zygosities as columns
+
+# Row names are currently of the form [locus2]-[locus2zyg]_[locus3]-[locus3zyg]
+# The inner strsplit separates otherloci genes via "_".
+#   The outer strsplit separates otherloci zygosities via "-".  This is added
+#   to a vector that is cbinded (cbound?) to countdf
+countdfcolnum <- ncol(countdf)
+locus2zyg <- c()
+locus3zyg <- c()
+for (i in 1:nrow(countdf)) {
+  locus2zyg <- c(locus2zyg,
+                 strsplit(strsplit(rownames(countdf)[i], "_")[[1]][1], "-")[[1]][2])
+  locus3zyg <- c(locus3zyg,
+                 strsplit(strsplit(rownames(countdf)[i], "_")[[1]][2], "-")[[1]][2])
+}
+countdfnames <- colnames(countdf)
+countdf <- cbind(countdf, locus2zyg, locus3zyg)
+colnames(countdf) <- c(countdfnames, paste0(locus2, "zyg"), paste0(locus3, "zyg"))
+rownames(countdf) <- NULL
+
+
+
+
+# Values in each baselocus zygosity column are changed to percentages
+#   so they can be plotted on the ternary, but their sum is saved for sizing.
+#   Those chunks of awful are a way to mutate based on variable column names
+for (i in 1:nrow(countdf)) {
+  countdf$CellNum[i] <- sum(countdf[i, grepl(baselocus, colnames(countdf))])
+  countdf[i, grep(baselocuszyg1, colnames(countdf))] <-
+                  countdf[i, grep(baselocuszyg1, colnames(countdf))] / countdf$CellNum[i]*100
+  countdf[i, grep(baselocuszyg2, colnames(countdf))] <-
+                  countdf[i, grep(baselocuszyg2, colnames(countdf))] / countdf$CellNum[i]*100
+  countdf[i, grep(baselocuszyg3, colnames(countdf))] <-
+                  countdf[i, grep(baselocuszyg3, colnames(countdf))] / countdf$CellNum[i]*100
+}
+
+
+# In order to plot the Confidence Interval's ring, we need to create a single
+#   value for it - we currently have an error value in each possible zygosity
+#   Confidence interval = mean +- MSE*t(0.025, df = 8)
+#   CI95 = mean +- 2.26
+
+locus2zygcol <- grep(locus2, colnames(countdf))
+locus3zygcol <- grep(locus3, colnames(countdf))
+
+for (i in unique(countdf[, locus2zygcol])) {
+  for (j in unique(countdf[, locus3zygcol])) {
+    SEsubset <- subset(ternarydf, ternarydf[, locus2col] == i & ternarydf[, locus3col] == j)
+    adjCI95 <- 1.96*sqrt(sum((SEsubset$StD)^2))/sqrt(4)
+    countdfrow <- which(countdf[, locus2zygcol] == i & countdf[, locus3zygcol] == j)
+    countdf$CI95[countdfrow] <- adjCI95
+  }
+}
+
+
+# Save a version with this name for calling later.  Countdf is just a working file
+assign(paste0(baselocus, "countdf"), countdf)
+
+
+# Now that we've got our confidence intervals as part of countdf, make
+#   a separate dataframe with the confidence interval hexagon vertices' locations.
+# Also, ggtern is dumb: it says the z-coordinates of a point/segment are required
+#   but warns they're not used when they're actually plotted
+countdfbasezyg1 <- grep(baselocuszyg1, colnames(countdf))
+countdfbasezyg2 <- grep(baselocuszyg2, colnames(countdf))
+countdfbasezyg3 <- grep(baselocuszyg3, colnames(countdf))
+for (i in 1:nrow(countdf)) {
+  WT <- countdf[i, countdfbasezyg1]
+  MUT <- countdf[i, countdfbasezyg2]
+  HET <- countdf[i, countdfbasezyg3]
+  CI <- countdf$CI95[i]
+  CIvec <- c(WT-CI, MUT+CI/2, HET+CI/2,
+             WT-CI/2, MUT-CI/2, HET+CI,
+             WT+CI/2, MUT-CI, HET+CI/2,
+             WT+CI, MUT-CI/2, HET-CI/2,
+             WT+CI/2, MUT+CI/2, HET-CI,
+             WT-CI/2, MUT+CI, HET-CI/2)
+  if (i == 1) {
+    CIdf <- CIvec
+  } else {
+    CIdf <- rbind(CIdf, CIvec)
+  }
+}
+colnames(CIdf) <- c("Lminx", "Lminy", "Lminz",
+                    "Rmaxx", "Rmaxy", "Rmaxz",
+                    "Tminx", "Tminy", "Tminz",
+                    "Lmaxx", "Lmaxy", "Lmaxz",
+                    "Rminx", "Rminy", "Rminz",
+                    "Tmaxx", "Tmaxy", "Tmaxz")
+CIdf <- as.data.frame(CIdf)
+rownames(CIdf) <- NULL
+
+assign(paste0(baselocus, "CIdf"), CIdf)
+
+
+# Let's make a dataframe that accounts for CI and Allele Dropout!
+#   Values are plot percents, NOT percentages by which to scale coordinates.
+
+for (i in 1:nrow(countdf)) {
+  WT <- countdf[i, countdfbasezyg1]
+  MUT <- countdf[i, countdfbasezyg2]
+  HET <- countdf[i, countdfbasezyg3]
+  WTDO <- get(paste0(baselocus, "AD"))[1]
+  MUTDO <- get(paste0(baselocus, "AD"))[2]
+  CI <- countdf$CI95[i]
+  ADCIvec <- c((WT-CI)*(1-MUTDO/100), (MUT+CI/2)*(1-WTDO/100), (HET+CI/2)*(1+WTDO/100+MUTDO/100),
+             (WT-CI/2)*(1-MUTDO/100), (MUT-CI/2)*(1-WTDO/100), (HET+CI)*(1+WTDO/100+MUTDO/100),
+             (WT+CI/2)*(1-MUTDO/100), (MUT-CI)*(1-WTDO/100), (HET+CI/2)*(1+WTDO/100+MUTDO/100),
+             (WT+CI)*(1-MUTDO/100), (MUT-CI/2)*(1-WTDO/100), (HET-CI/2)*(1+WTDO/100+MUTDO/100),
+             (WT+CI/2)*(1-MUTDO/100), (MUT+CI/2)*(1-WTDO/100), (HET-CI)*(1+WTDO/100+MUTDO/100),
+             (WT-CI/2)*(1-MUTDO/100), (MUT+CI)*(1-WTDO/100), (HET-CI/2)*(1+WTDO/100+MUTDO/100))
+  if (i == 1) {
+    ADCIdf <- ADCIvec
+  } else {
+    ADCIdf <- rbind(ADCIdf, ADCIvec)
+  }
+}
+
+colnames(ADCIdf) <- c("Lminx", "Lminy", "Lminz",
+                    "Rmaxx", "Rmaxy", "Rmaxz",
+                    "Tminx", "Tminy", "Tminz",
+                    "Lmaxx", "Lmaxy", "Lmaxz",
+                    "Rminx", "Rminy", "Rminz",
+                    "Tmaxx", "Tmaxy", "Tmaxz")
+ADCIdf <- as.data.frame(ADCIdf)
+rownames(ADCIdf) <- NULL
+
+assign(paste0(baselocus, "ADCIdf"), ADCIdf)
+
+```
+
+
+
+
+There are several versions of this ternary plot, so if you run the entire chunk
+  you're going to get several plots out.
+```{r Plot the NPM1a ternary.  Not currently generalized, but might get there someday}
+baselocus <- "NPM1a"
+otherloci <- setdiff(allloci, baselocus)
+locus2 <- otherloci[1]
+locus3 <- otherloci[2]
+
+# This version shows point size as a function of % of cell counts.
+#   It does not show confidence intervals at all
+NPM1aPop <- ggtern(NPM1acountdf, aes(NPM1aW, NPM1aM, NPM1aH)) +
+  scale_shape_manual(values = c(15:17)) +
+  geom_point(aes(color = get(paste0(locus2, "zyg")),
+                 shape = get(paste0(locus3, "zyg")),
+                 size = CellNum/sum(CellNum)*100),
+             alpha = plotalpha) +
+  ggtitle("Patient 7", subtitle = "Four-plate aggregate data \n\nBase Mutation: NPM1") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = paste0(locus2, "\nZygosity"),
+       shape = paste0(locus3, "\nZygosity "),
+       size = "Percent \nof Cells") +
+  theme_showarrows()
+
+setwd(Patient7input)
+pdf("NPM1a_Ternary_PopSizes.pdf", width = plotwidth, height = plotheight)
+NPM1aPop
+dev.off()
+
+
+# This version does show population percentage.  The shapes around each point
+#   represent the 95% confidence interval of baselocus zygosity distribution
+#   based on the four plates' inputs
+
+NPM1aCI <- ggtern(NPM1acountdf, aes(NPM1aW, NPM1aM, NPM1aH)) +
+  scale_shape_manual(values = c(15:17)) +
+  geom_point(aes(color = get(paste0(locus2, "zyg")),
+                 shape = get(paste0(locus3, "zyg"))),
+                 size = 5, alpha = plotalpha) +
+  ggtitle("Patient 7", subtitle = "Four-plate aggregate data \n\nBase Mutation: NPM1") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = paste0(locus2, "\nZygosity"),
+       shape = paste0(locus3, "\nZygosity ")) +
+  theme_showarrows() +
+  geom_segment(data = NPM1aCIdf, aes(x = Lminx, y = Lminy, z = Lminz,
+                                xend = Rmaxx, yend = Rmaxy, zend = Rmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aCIdf, aes(x = Rmaxx, y = Rmaxy, z = Rmaxz,
+                                xend = Tminx, yend = Tminy, zend = Tminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aCIdf, aes(x = Tminx, y = Tminy, z = Tminz,
+                                xend = Lmaxx, yend = Lmaxy, zend = Lmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aCIdf, aes(x = Lmaxx, y = Lmaxy, z = Lmaxz,
+                                xend = Rminx, yend = Rminy, zend = Rminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aCIdf, aes(x = Rminx, y = Rminy, z = Rminz,
+                                xend = Tmaxx, yend = Tmaxy, zend = Tmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aCIdf, aes(x = Tmaxx, y = Tmaxy, z = Tmaxz,
+                                xend = Lminx, yend = Lminy, zend = Lminz), alpha = 0.5, size = 0.5)
+  
+setwd(Patient7input)
+pdf("NPM1a_Ternary_CI.pdf", width = plotwidth, height = plotheight)
+NPM1aCI
+dev.off()
+
+
+# This version might be confusing, but it combines the CI95 info and
+#   the population size info
+
+NPM1aCIPop <- ggtern(NPM1acountdf, aes(NPM1aW, NPM1aM, NPM1aH)) +
+  scale_shape_manual(values = c(15:17)) +
+  geom_point(aes(color = get(paste0(locus2, "zyg")),
+                 shape = get(paste0(locus3, "zyg")),
+                 size = CellNum/sum(CellNum)*100),
+            alpha = plotalpha) +
+  ggtitle("Patient 7", subtitle = "Four-plate aggregate data \n\nBase Mutation: NPM1") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = paste0(locus2, "\nZygosity"),
+       shape = paste0(locus3, "\nZygosity "),
+       size = "Percent \nof Cells") +
+  theme_showarrows() +
+  geom_segment(data = NPM1aCIdf, aes(x = Lminx, y = Lminy, z = Lminz,
+                                xend = Rmaxx, yend = Rmaxy, zend = Rmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aCIdf, aes(x = Rmaxx, y = Rmaxy, z = Rmaxz,
+                                xend = Tminx, yend = Tminy, zend = Tminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aCIdf, aes(x = Tminx, y = Tminy, z = Tminz,
+                                xend = Lmaxx, yend = Lmaxy, zend = Lmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aCIdf, aes(x = Lmaxx, y = Lmaxy, z = Lmaxz,
+                                xend = Rminx, yend = Rminy, zend = Rminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aCIdf, aes(x = Rminx, y = Rminy, z = Rminz,
+                                xend = Tmaxx, yend = Tmaxy, zend = Tmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aCIdf, aes(x = Tmaxx, y = Tmaxy, z = Tmaxz,
+                                xend = Lminx, yend = Lminy, zend = Lminz), alpha = 0.5, size = 0.5)
+
+setwd(Patient7input)
+pdf("NPM1a_Ternary_CIPop.pdf", width = plotwidth, height = plotheight)
+NPM1aCIPop
+dev.off()
+
+
+
+
+# This version plots CI scaled by allele dropout as a wireframe around each point,
+#   which is also scaled by AD
+
+NPM1aADCI <- ggtern(NPM1acountdf, aes(NPM1aW*(1-AD_NPM1a_MUT/100),
+                                      NPM1aM*(1-AD_NPM1a_WT/100),
+                                      NPM1aH*(1+AD_NPM1a_MUT/100+AD_NPM1a_WT/100))) +
+  scale_shape_manual(values = c(15:17)) +
+  geom_point(aes(color = get(paste0(locus2, "zyg")),
+                 shape = get(paste0(locus3, "zyg"))),
+                 size = 5, alpha = plotalpha) +
+  ggtitle("Patient 7", subtitle = "Four-plate aggregate data \n\nBase Mutation: NPM1") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = paste0(locus2, "\nZygosity"),
+       shape = paste0(locus3, "\nZygosity ")) +
+  theme_showarrows() +
+  geom_segment(data = NPM1aADCIdf, aes(x = Lminx, y = Lminy, z = Lminz,
+                                xend = Rmaxx, yend = Rmaxy, zend = Rmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aADCIdf, aes(x = Rmaxx, y = Rmaxy, z = Rmaxz,
+                                xend = Tminx, yend = Tminy, zend = Tminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aADCIdf, aes(x = Tminx, y = Tminy, z = Tminz,
+                                xend = Lmaxx, yend = Lmaxy, zend = Lmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aADCIdf, aes(x = Lmaxx, y = Lmaxy, z = Lmaxz,
+                                xend = Rminx, yend = Rminy, zend = Rminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aADCIdf, aes(x = Rminx, y = Rminy, z = Rminz,
+                                xend = Tmaxx, yend = Tmaxy, zend = Tmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aADCIdf, aes(x = Tmaxx, y = Tmaxy, z = Tmaxz,
+                                xend = Lminx, yend = Lminy, zend = Lminz), alpha = 0.5, size = 0.5)
+  
+setwd(Patient7input)
+pdf("NPM1a_Ternary_ADCI.pdf", width = plotwidth, height = plotheight)
+NPM1aADCI
+dev.off()
+
+
+# This one's the whole shebang!  AD scaling for points and for CIs, sizes
+#   correspond to population percentages
+
+
+NPM1aADCIPop <- ggtern(NPM1acountdf, aes(NPM1aW*(1-MUTDO/100), NPM1aM*(1-WTDO/100), NPM1aH*(1+MUTDO/100+WTDO/100))) +
+  scale_shape_manual(values = c(15:17)) +
+  geom_point(aes(color = get(paste0(locus2, "zyg")),
+                 shape = get(paste0(locus3, "zyg")),
+                 size = CellNum/sum(CellNum)*100),
+             alpha = plotalpha) +
+  ggtitle("Patient 7", subtitle = "Four-plate aggregate data \n\nBase Mutation: NPM1") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = paste0(locus2, "\nZygosity"),
+       shape = paste0(locus3, "\nZygosity "),
+       size = "Percent \nof Cells") +
+  theme_showarrows() +
+  geom_segment(data = NPM1aADCIdf, aes(x = Lminx, y = Lminy, z = Lminz,
+                                xend = Rmaxx, yend = Rmaxy, zend = Rmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aADCIdf, aes(x = Rmaxx, y = Rmaxy, z = Rmaxz,
+                                xend = Tminx, yend = Tminy, zend = Tminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aADCIdf, aes(x = Tminx, y = Tminy, z = Tminz,
+                                xend = Lmaxx, yend = Lmaxy, zend = Lmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aADCIdf, aes(x = Lmaxx, y = Lmaxy, z = Lmaxz,
+                                xend = Rminx, yend = Rminy, zend = Rminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aADCIdf, aes(x = Rminx, y = Rminy, z = Rminz,
+                                xend = Tmaxx, yend = Tmaxy, zend = Tmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = NPM1aADCIdf, aes(x = Tmaxx, y = Tmaxy, z = Tmaxz,
+                                xend = Lminx, yend = Lminy, zend = Lminz), alpha = 0.5, size = 0.5)
+  
+setwd(Patient7input)
+pdf("NPM1a_Ternary_ADCIPop.pdf", width = plotwidth, height = plotheight)
+NPM1aADCIPop
+dev.off()
+
+# You can generalize the plot structure if you're careful about your labels!
+
+# NPM1ternplot <- ggtern(countdf, aes(get(paste0(baselocus, "W")),
+#                                     get(paste0(baselocus, "M")),
+#                                     get(paste0(baselocus, "H")))) +
+#   geom_point(aes(color = get(paste0(locus2, "zyg")),
+#                  shape = get(paste0(locus3, "zyg")),
+#                  size = CellNum/sum(CellNum)*100))
+
+
+# Built-in error bars.  Not super-customizable and obscure shapes
+
+# geom_errorbarT(aes(Tmin=NPM1aM-CI95, Tmax=NPM1aM+CI95), alpha = 0.5, size = 0.4) + 
+# geom_errorbarL(aes(Lmin=NPM1aW-CI95, Lmax=NPM1aW+CI95), alpha = 0.5, size = 0.4) +
+# geom_errorbarR(aes(Rmin=NPM1aH-CI95, Rmax=NPM1aH+CI95), alpha = 0.5, size = 0.4)
+
+```
+
+There are several versions of this ternary plot, so if you run the entire chunk
+  you're going to get several plots out.
+```{r Plot the FLT3ITD ternary.  Not currently generalized, but might get there someday}
+baselocus <- "FLT3ITD"
+otherloci <- setdiff(allloci, baselocus)
+locus2 <- otherloci[1]
+locus3 <- otherloci[2]
+
+# This version shows point size as a function of % of cell counts.
+#   It does not show confidence intervals at all
+FLT3ITDPop <- ggtern(FLT3ITDcountdf, aes(FLT3ITDW, FLT3ITDM, FLT3ITDH)) +
+  scale_shape_manual(values = c(15:17)) +
+  geom_point(aes(color = get(paste0(locus2, "zyg")),
+                 shape = get(paste0(locus3, "zyg")),
+                 size = CellNum/sum(CellNum)*100),
+             alpha = plotalpha) +
+  ggtitle("Patient 7", subtitle = "Four-plate aggregate data \n\nBase Mutation: FLT3ITD") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = paste0(locus2, "\nZygosity"),
+       shape = paste0(locus3, "\nZygosity "),
+       size = "Percent \nof Cells") +
+  theme_showarrows()
+
+setwd(Patient7input)
+pdf("FLT3ITD_Ternary_PopSizes.pdf", width = plotwidth, height = plotheight)
+FLT3ITDPop
+dev.off()
+
+
+# This version does show population percentage.  The shapes around each point
+#   represent the 95% confidence interval of baselocus zygosity distribution
+#   based on the four plates' inputs
+
+FLT3ITDCI <- ggtern(FLT3ITDcountdf, aes(FLT3ITDW, FLT3ITDM, FLT3ITDH)) +
+  scale_shape_manual(values = c(15:17)) +
+  geom_point(aes(color = get(paste0(locus2, "zyg")),
+                 shape = get(paste0(locus3, "zyg"))),
+                 size = 5, alpha = plotalpha) +
+  ggtitle("Patient 7", subtitle = "Four-plate aggregate data \n\nBase Mutation: FLT3ITD") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = paste0(locus2, "\nZygosity"),
+       shape = paste0(locus3, "\nZygosity ")) +
+  theme_showarrows() +
+  geom_segment(data = FLT3ITDCIdf, aes(x = Lminx, y = Lminy, z = Lminz,
+                                xend = Rmaxx, yend = Rmaxy, zend = Rmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDCIdf, aes(x = Rmaxx, y = Rmaxy, z = Rmaxz,
+                                xend = Tminx, yend = Tminy, zend = Tminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDCIdf, aes(x = Tminx, y = Tminy, z = Tminz,
+                                xend = Lmaxx, yend = Lmaxy, zend = Lmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDCIdf, aes(x = Lmaxx, y = Lmaxy, z = Lmaxz,
+                                xend = Rminx, yend = Rminy, zend = Rminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDCIdf, aes(x = Rminx, y = Rminy, z = Rminz,
+                                xend = Tmaxx, yend = Tmaxy, zend = Tmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDCIdf, aes(x = Tmaxx, y = Tmaxy, z = Tmaxz,
+                                xend = Lminx, yend = Lminy, zend = Lminz), alpha = 0.5, size = 0.5)
+  
+setwd(Patient7input)
+pdf("FLT3ITD_Ternary_CI.pdf", width = plotwidth, height = plotheight)
+FLT3ITDCI
+dev.off()
+
+
+# This version might be confusing, but it combines the CI95 info and
+#   the population size info
+
+FLT3ITDCIPop <- ggtern(FLT3ITDcountdf, aes(FLT3ITDW, FLT3ITDM, FLT3ITDH)) +
+  scale_shape_manual(values = c(15:17)) +
+  geom_point(aes(color = get(paste0(locus2, "zyg")),
+                 shape = get(paste0(locus3, "zyg")),
+                 size = CellNum/sum(CellNum)*100),
+            alpha = plotalpha) +
+  ggtitle("Patient 7", subtitle = "Four-plate aggregate data \n\nBase Mutation: FLT3ITD") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = paste0(locus2, "\nZygosity"),
+       shape = paste0(locus3, "\nZygosity "),
+       size = "Percent \nof Cells") +
+  theme_showarrows() +
+  geom_segment(data = FLT3ITDCIdf, aes(x = Lminx, y = Lminy, z = Lminz,
+                                xend = Rmaxx, yend = Rmaxy, zend = Rmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDCIdf, aes(x = Rmaxx, y = Rmaxy, z = Rmaxz,
+                                xend = Tminx, yend = Tminy, zend = Tminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDCIdf, aes(x = Tminx, y = Tminy, z = Tminz,
+                                xend = Lmaxx, yend = Lmaxy, zend = Lmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDCIdf, aes(x = Lmaxx, y = Lmaxy, z = Lmaxz,
+                                xend = Rminx, yend = Rminy, zend = Rminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDCIdf, aes(x = Rminx, y = Rminy, z = Rminz,
+                                xend = Tmaxx, yend = Tmaxy, zend = Tmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDCIdf, aes(x = Tmaxx, y = Tmaxy, z = Tmaxz,
+                                xend = Lminx, yend = Lminy, zend = Lminz), alpha = 0.5, size = 0.5)
+
+setwd(Patient7input)
+pdf("FLT3ITD_Ternary_CIPop.pdf", width = plotwidth, height = plotheight)
+FLT3ITDCIPop
+dev.off()
+
+
+
+
+# This version plots CI scaled by allele dropout as a wireframe around each point,
+#   which is also scaled by AD
+
+FLT3ITDADCI <- ggtern(FLT3ITDcountdf,
+                      aes(FLT3ITDW*(1-AD_FLT3ITD_MUT/100),
+                          FLT3ITDM*(1-AD_FLT3ITD_WT/100),
+                          FLT3ITDH*(1+AD_FLT3ITD_MUT/100+AD_FLT3ITD_WT/100))) +
+  scale_shape_manual(values = c(15:17)) +
+  geom_point(aes(color = get(paste0(locus2, "zyg")),
+                 shape = get(paste0(locus3, "zyg"))),
+                 size = 5, alpha = plotalpha) +
+  ggtitle("Patient 7", subtitle = "Four-plate aggregate data \n\nBase Mutation: FLT3ITD") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = paste0(locus2, "\nZygosity"),
+       shape = paste0(locus3, "\nZygosity ")) +
+  theme_showarrows() +
+  geom_segment(data = FLT3ITDADCIdf, aes(x = Lminx, y = Lminy, z = Lminz,
+                                xend = Rmaxx, yend = Rmaxy, zend = Rmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDADCIdf, aes(x = Rmaxx, y = Rmaxy, z = Rmaxz,
+                                xend = Tminx, yend = Tminy, zend = Tminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDADCIdf, aes(x = Tminx, y = Tminy, z = Tminz,
+                                xend = Lmaxx, yend = Lmaxy, zend = Lmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDADCIdf, aes(x = Lmaxx, y = Lmaxy, z = Lmaxz,
+                                xend = Rminx, yend = Rminy, zend = Rminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDADCIdf, aes(x = Rminx, y = Rminy, z = Rminz,
+                                xend = Tmaxx, yend = Tmaxy, zend = Tmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDADCIdf, aes(x = Tmaxx, y = Tmaxy, z = Tmaxz,
+                                xend = Lminx, yend = Lminy, zend = Lminz), alpha = 0.5, size = 0.5)
+  
+setwd(Patient7input)
+pdf("FLT3ITD_Ternary_ADCI.pdf", width = plotwidth, height = plotheight)
+FLT3ITDADCI
+dev.off()
+
+
+# This one's the whole shebang!  AD scaling for points and for CIs, sizes
+#   correspond to population percentages
+
+
+FLT3ITDADCIPop <- ggtern(FLT3ITDcountdf,
+                         aes(FLT3ITDW*(1-MUTDO/100),
+                             FLT3ITDM*(1-WTDO/100),
+                             FLT3ITDH*(1+MUTDO/100+WTDO/100))) +
+  scale_shape_manual(values = c(15:17)) +
+  geom_point(aes(color = get(paste0(locus2, "zyg")),
+                 shape = get(paste0(locus3, "zyg")),
+                 size = CellNum/sum(CellNum)*100),
+             alpha = plotalpha) +
+  ggtitle("Patient 7", subtitle = "Four-plate aggregate data \n\nBase Mutation: FLT3ITD") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = paste0(locus2, "\nZygosity"),
+       shape = paste0(locus3, "\nZygosity "),
+       size = "Percent \nof Cells") +
+  theme_showarrows() +
+  geom_segment(data = FLT3ITDADCIdf, aes(x = Lminx, y = Lminy, z = Lminz,
+                                xend = Rmaxx, yend = Rmaxy, zend = Rmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDADCIdf, aes(x = Rmaxx, y = Rmaxy, z = Rmaxz,
+                                xend = Tminx, yend = Tminy, zend = Tminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDADCIdf, aes(x = Tminx, y = Tminy, z = Tminz,
+                                xend = Lmaxx, yend = Lmaxy, zend = Lmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDADCIdf, aes(x = Lmaxx, y = Lmaxy, z = Lmaxz,
+                                xend = Rminx, yend = Rminy, zend = Rminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDADCIdf, aes(x = Rminx, y = Rminy, z = Rminz,
+                                xend = Tmaxx, yend = Tmaxy, zend = Tmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = FLT3ITDADCIdf, aes(x = Tmaxx, y = Tmaxy, z = Tmaxz,
+                                xend = Lminx, yend = Lminy, zend = Lminz), alpha = 0.5, size = 0.5)
+  
+setwd(Patient7input)
+pdf("FLT3ITD_Ternary_ADCIPop.pdf", width = plotwidth, height = plotheight)
+FLT3ITDADCIPop
+dev.off()
+
+# You can generalize the plot structure if you're careful about your labels!
+
+# NPM1ternplot <- ggtern(countdf, aes(get(paste0(baselocus, "W")),
+#                                     get(paste0(baselocus, "M")),
+#                                     get(paste0(baselocus, "H")))) +
+#   geom_point(aes(color = get(paste0(locus2, "zyg")),
+#                  shape = get(paste0(locus3, "zyg")),
+#                  size = CellNum/sum(CellNum)*100))
+
+
+# Built-in error bars.  Not super-customizable and obscure shapes
+
+# geom_errorbarT(aes(Tmin=NPM1aM-CI95, Tmax=NPM1aM+CI95), alpha = 0.5, size = 0.4) + 
+# geom_errorbarL(aes(Lmin=NPM1aW-CI95, Lmax=NPM1aW+CI95), alpha = 0.5, size = 0.4) +
+# geom_errorbarR(aes(Rmin=NPM1aH-CI95, Rmax=NPM1aH+CI95), alpha = 0.5, size = 0.4)
+
+```
+
+There are several versions of this ternary plot, so if you run the entire chunk
+  you're going to get several plots out.
+```{r Plot the WT1 ternary.  Not currently generalized, but might get there someday}
+baselocus <- "WT1"
+otherloci <- setdiff(allloci, baselocus)
+locus2 <- otherloci[1]
+locus3 <- otherloci[2]
+
+# This version shows point size as a function of % of cell counts.
+#   It does not show confidence intervals at all
+WT1Pop <- ggtern(WT1countdf, aes(WT1W, WT1M, WT1H)) +
+  scale_shape_manual(values = c(15:17)) +
+  geom_point(aes(color = get(paste0(locus2, "zyg")),
+                 shape = get(paste0(locus3, "zyg")),
+                 size = CellNum/sum(CellNum)*100),
+             alpha = plotalpha) +
+  ggtitle("Patient 7", subtitle = "Four-plate aggregate data \n\nBase Mutation: WT1") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = paste0(locus2, "\nZygosity"),
+       shape = paste0(locus3, "\nZygosity "),
+       size = "Percent \nof Cells") +
+  theme_showarrows()
+
+setwd(Patient7input)
+pdf("WT1_Ternary_PopSizes.pdf", width = plotwidth, height = plotheight)
+WT1Pop
+dev.off()
+
+
+# This version does show population percentage.  The shapes around each point
+#   represent the 95% confidence interval of baselocus zygosity distribution
+#   based on the four plates' inputs
+
+WT1CI <- ggtern(WT1countdf, aes(WT1W, WT1M, WT1H)) +
+  scale_shape_manual(values = c(15:17)) +
+  geom_point(aes(color = get(paste0(locus2, "zyg")),
+                 shape = get(paste0(locus3, "zyg"))),
+                 size = 5, alpha = plotalpha) +
+  ggtitle("Patient 7", subtitle = "Four-plate aggregate data \n\nBase Mutation: WT1") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = paste0(locus2, "\nZygosity"),
+       shape = paste0(locus3, "\nZygosity ")) +
+  theme_showarrows() +
+  geom_segment(data = WT1CIdf, aes(x = Lminx, y = Lminy, z = Lminz,
+                                xend = Rmaxx, yend = Rmaxy, zend = Rmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = WT1CIdf, aes(x = Rmaxx, y = Rmaxy, z = Rmaxz,
+                                xend = Tminx, yend = Tminy, zend = Tminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = WT1CIdf, aes(x = Tminx, y = Tminy, z = Tminz,
+                                xend = Lmaxx, yend = Lmaxy, zend = Lmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = WT1CIdf, aes(x = Lmaxx, y = Lmaxy, z = Lmaxz,
+                                xend = Rminx, yend = Rminy, zend = Rminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = WT1CIdf, aes(x = Rminx, y = Rminy, z = Rminz,
+                                xend = Tmaxx, yend = Tmaxy, zend = Tmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = WT1CIdf, aes(x = Tmaxx, y = Tmaxy, z = Tmaxz,
+                                xend = Lminx, yend = Lminy, zend = Lminz), alpha = 0.5, size = 0.5)
+  
+setwd(Patient7input)
+pdf("WT1_Ternary_CI.pdf", width = plotwidth, height = plotheight)
+WT1CI
+dev.off()
+
+
+# This version might be confusing, but it combines the CI95 info and
+#   the population size info
+
+WT1CIPop <- ggtern(WT1countdf, aes(WT1W, WT1M, WT1H)) +
+  scale_shape_manual(values = c(15:17)) +
+  geom_point(aes(color = get(paste0(locus2, "zyg")),
+                 shape = get(paste0(locus3, "zyg")),
+                 size = CellNum/sum(CellNum)*100),
+            alpha = plotalpha) +
+  ggtitle("Patient 7", subtitle = "Four-plate aggregate data \n\nBase Mutation: WT1") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = paste0(locus2, "\nZygosity"),
+       shape = paste0(locus3, "\nZygosity "),
+       size = "Percent \nof Cells") +
+  theme_showarrows() +
+  geom_segment(data = WT1CIdf, aes(x = Lminx, y = Lminy, z = Lminz,
+                                xend = Rmaxx, yend = Rmaxy, zend = Rmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = WT1CIdf, aes(x = Rmaxx, y = Rmaxy, z = Rmaxz,
+                                xend = Tminx, yend = Tminy, zend = Tminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = WT1CIdf, aes(x = Tminx, y = Tminy, z = Tminz,
+                                xend = Lmaxx, yend = Lmaxy, zend = Lmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = WT1CIdf, aes(x = Lmaxx, y = Lmaxy, z = Lmaxz,
+                                xend = Rminx, yend = Rminy, zend = Rminz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = WT1CIdf, aes(x = Rminx, y = Rminy, z = Rminz,
+                                xend = Tmaxx, yend = Tmaxy, zend = Tmaxz), alpha = 0.5, size = 0.5) +
+  geom_segment(data = WT1CIdf, aes(x = Tmaxx, y = Tmaxy, z = Tmaxz,
+                                xend = Lminx, yend = Lminy, zend = Lminz), alpha = 0.5, size = 0.5)
+
+setwd(Patient7input)
+pdf("WT1_Ternary_CIPop.pdf", width = plotwidth, height = plotheight)
+WT1CIPop
+dev.off()
+
+
+
+
+
+
+
+# You can generalize the plot structure if you're careful about your labels!
+
+# NPM1ternplot <- ggtern(countdf, aes(get(paste0(baselocus, "W")),
+#                                     get(paste0(baselocus, "M")),
+#                                     get(paste0(baselocus, "H")))) +
+#   geom_point(aes(color = get(paste0(locus2, "zyg")),
+#                  shape = get(paste0(locus3, "zyg")),
+#                  size = CellNum/sum(CellNum)*100))
+
+
+# Built-in error bars.  Not super-customizable and obscure shapes
+
+# geom_errorbarT(aes(Tmin=NPM1aM-CI95, Tmax=NPM1aM+CI95), alpha = 0.5, size = 0.4) + 
+# geom_errorbarL(aes(Lmin=NPM1aW-CI95, Lmax=NPM1aW+CI95), alpha = 0.5, size = 0.4) +
+# geom_errorbarR(aes(Rmin=NPM1aH-CI95, Rmax=NPM1aH+CI95), alpha = 0.5, size = 0.4)
+
+```
+
+
+
+
+
+```{r Calculate VAF}
+testdf <- SCdata
+testdfWT1_WT <- subset(SCdata, WT1 == "W")
+testdfWT1_MUT <- subset(SCdata, WT1 == "M")
+testdfWT1_HET <- subset(SCdata, WT1 == "H")
+WT1VAF <- round((sum(testdfWT1_MUT$Counts)+sum(testdfWT1_HET$Counts)/2) /
+                        sum(testdf$Counts), 4)*100
+
+testdf <- SCdata
+testdfNPM1a_WT <- subset(SCdata, NPM1a == "W")
+testdfNPM1a_MUT <- subset(SCdata, NPM1a == "M")
+testdfNPM1a_HET <- subset(SCdata, NPM1a == "H")
+NPM1aVAF <- round((sum(testdfNPM1a_MUT$Counts)+sum(testdfNPM1a_HET$Counts)/2) /
+                        sum(testdf$Counts), 4)*100
+
+testdf <- SCdata
+testdfFLT3ITD_WT <- subset(SCdata, FLT3ITD == "W")
+testdfFLT3ITD_MUT <- subset(SCdata, FLT3ITD == "M")
+testdfFLT3ITD_HET <- subset(SCdata, FLT3ITD == "H")
+FLT3ITDVAF <- round((sum(testdfFLT3ITD_MUT$Counts)+sum(testdfFLT3ITD_HET$Counts)/2) /
+                        sum(testdf$Counts), 4)*100
+```
+
+
+
+
+
+
+
+
+3d Scatter attempt.  Not very useful
+```{r 3d Scatter}
+test <- as.data.frame(cbind(rep(c("NPM1_HET", "NPM1_WT", "NPM1_MUT"), 3),
+              c(rep("FLT3ITD_WT", 3), rep("FLT3ITD_MUT", 3), rep("FLT3ITD_HET", 3))))
+              
+test <- cbind(test, c(10, 50, 27, 18, 33, 92, 47, 24, 6))
+colnames(test) <- c("NPM1_Zyg", "FLT3_Zyg", "Count")
+
+testscatter <- ggplot() + geom_point(data = test, aes(x = NPM1_Zyg, y = FLT3_Zyg,
+                                                      size = Count, shape = FLT3_Zyg,
+                                                      color = NPM1_Zyg))
+
+# NPM1a: 1 = WT, 2 = MUT, 3 = HET
+# FLT3ITD: 10 = WT, 20 = MUT, 30 = HET
+# WT1:  100 = WT, 200 = MUT, 300 = HET
+scatter3ddata <- subset(SCdata, select = c(NPM1a, FLT3ITD, WT1, Counts))
+scatter3ddata <- mutate(scatter3ddata, NPM1a=replace(NPM1a, NPM1a=="W",1))
+scatter3ddata <- mutate(scatter3ddata, NPM1a=replace(NPM1a, NPM1a=="M",2))
+scatter3ddata <- mutate(scatter3ddata, NPM1a=replace(NPM1a, NPM1a=="H",3))
+
+scatter3ddata <- mutate(scatter3ddata, FLT3ITD=replace(FLT3ITD, FLT3ITD=="W",10))
+scatter3ddata <- mutate(scatter3ddata, FLT3ITD=replace(FLT3ITD, FLT3ITD=="M",20))
+scatter3ddata <- mutate(scatter3ddata, FLT3ITD=replace(FLT3ITD, FLT3ITD=="H",30))
+
+scatter3ddata <- mutate(scatter3ddata, WT1=replace(WT1, WT1=="W",100))
+scatter3ddata <- mutate(scatter3ddata, WT1=replace(WT1, WT1=="M",200))
+scatter3ddata <- mutate(scatter3ddata, WT1=replace(WT1, WT1=="H",300))
+
+with(scatter3ddata, {
+s3d <- scatterplot3d(x = NPM1a, y = FLT3ITD, z = WT1, color = Counts,
+                    pch = 19, angle = 45, lab = c(x = 3, y = 3), x.ticklabs = unique(NPM1a))
+})
+
+
+```
+
+
+
+This a hybrid of a circos plot and a pie chart that uses the various countdfs.
+
+This plot has one slice for each gene (in this case, 3 slices), separated by gaps.
+  Each slice has subslices along the radial axis that correspond to that gene's
+  genotype - sizes of these radial subslices describe their overall zygosities.
+  Each slice has subslices along the non-radial axis for each other gene.
+  The color of each double subslice represents the ternary distribution of paired
+  zygosities (eg. NPM1a WT's FLT3ITD proportions) corresponding to the RGB triangle.
+```{r Failed Circos}
+
+# First we've got to get our data in an unreasonable format.
+#   paths = [inner name] - [outer name]
+#   values = % locuszyg / nloci
+#   colors are messy and will come later
+
+# NPM1 radial slices:
+NPM1radii <- subset(WT1countdf, select = -CI95)
+radialslices <- c()
+for (i in unique(NPM1radii$NPM1azyg)) {
+  datasubset <- subset(NPM1radii, NPM1azyg == i)
+  cellcount <- round(sum(datasubset$CellNum)/3, 1)
+  if (i == unique(NPM1radii$NPM1azyg)[1]) {
+    radialslices <- as.numeric(cellcount)
+  } else {
+    radialslices <- c(radialslices, as.numeric(cellcount))
+  }
+}
+radialslicesNPM1a <- as.data.frame(t(radialslices))
+colnames(radialslicesNPM1a) <- unique(NPM1radii$NPM1azyg)
+
+# FLT3 radial slices:
+FLT3radii <- subset(WT1countdf, select = -CI95)
+radialslices <- c()
+for (i in unique(FLT3radii$FLT3ITDzyg)) {
+  datasubset <- subset(FLT3radii, FLT3ITDzyg == i)
+  cellcount <- round(sum(datasubset$CellNum)/3, 1)
+  if (i == unique(FLT3radii$FLT3ITDzyg)[1]) {
+    radialslices <- as.numeric(cellcount)
+  } else {
+    radialslices <- c(radialslices, as.numeric(cellcount))
+  }
+}
+radialslicesFLT3ITD <- as.data.frame(t(radialslices))
+colnames(radialslicesFLT3ITD) <- unique(FLT3radii$FLT3ITDzyg)
+
+
+# WT1 radial slices:
+WT1inner <- subset(FLT3ITDcountdf, select = -CI95)
+radialslices <- c()
+for (i in unique(WT1inner$WT1zyg)) {
+  datasubset <- subset(WT1inner, WT1zyg == i)
+  cellcount <- round(sum(datasubset$CellNum)/3, 1)
+  if (i == unique(WT1inner$WT1zyg)[1]) {
+    radialslices <- as.numeric(cellcount)
+  } else {
+    radialslices <- c(radialslices, as.numeric(cellcount))
+  }
+}
+radialslicesWT1 <- as.data.frame(t(radialslices))
+colnames(radialslicesWT1) <- unique(WT1inner$WT1zyg)
+
+# Get paths and values set up
+pathvector <- c()
+valuevector <- c()
+for (i in allloci) {
+  otherloci <- setdiff(allloci, i)
+  locus2 <- otherloci[1]
+  locus3 <- otherloci[2]
+  baselocuscol <- grep(i, colnames(get(paste0(locus2, "countdf"))))
+  for (j in unique(get(paste0(locus2, "countdf"))[, baselocuscol])) {
+    path <- paste0(i, "_", j, "/", locus2, " - ",
+                    i, "_", j, "/", locus3)
+    value <- get(paste0("radialslices", i))[grep(j, colnames(get(paste0("radialslices", i))))]
+    if (i == allloci[1] && j == unique(get(paste0(locus2, "countdf"))[1, baselocuscol])) {
+      pathvector <- path
+      valuevector <- as.numeric(value)
+      } else {
+      pathvector <- c(pathvector, path)
+      valuevector <- c(valuevector, as.numeric(value))
+    }
+  }
+}
+
+sunburstdf <- cbind(pathvector, as.numeric(valuevector))
+rownames(sunburstdf) <- NULL
+colnames(sunburstdf) <- c("path", "value")
+sunburstdf <- as.data.frame(sunburstdf)
+# 
+# testsunburst <- sunburst(sunburstdf, sortFunction = "name")
+
+
+
+# Try a pie chart version of the same thing.  In ggplot it's probably more customizable
+layeredpiedfinner <- sunburstdf
+for (i in 1:nrow(layeredpiedfinner)) {
+  layeredpiedfinner$Name[i] <- strsplit(layeredpiedfinner$path[[i]], " - ")[[1]][1]
+}
+layeredpiedfinner$variable <- "inner"
+layeredpiedfinner <- subset(layeredpiedfinner, select = -path)
+
+layeredpiedfouter <- sunburstdf
+for (i in 1:nrow(layeredpiedfouter)) {
+  layeredpiedfouter$Name[i] <- strsplit(layeredpiedfouter$path[[i]], " - ")[[1]][2]
+}
+layeredpiedfouter$variable <- "outer"
+layeredpiedfouter <- subset(layeredpiedfouter, select = -path)
+
+layeredpiedf <- rbind(layeredpiedfinner, layeredpiedfouter)
+
+
+# Bar plots are dumb and only work if they count the rows per category themselves.
+pieplotdf <- c()
+for (i in 1:nrow(layeredpiedf)) {
+  for (j in 1:as.numeric(layeredpiedf$value[i])) {
+    pievector <- c(layeredpiedf$Name[i], layeredpiedf$variable[i])
+    if (i == 1 & j == 1) {
+      pieplotdf <- pievector
+      pieplotdf <- as.data.frame(t(pieplotdf))
+      colnames(pieplotdf) <- c("Name", "Location")
+    } else {
+      pieplotdf <- rbind(pieplotdf, pievector)
+    }
+  }
+}
+rownames(pieplotdf) <- NULL
+
+pieplotdf <- pieplotdf[order(pieplotdf$Name), ]
+
+# for (i in 1:nrow(pieplotdf)) {
+#   nName <- sum(pieplotdf$Name == pieplotdf$Name[i])
+#   
+# }
+
+lastypos <- 0
+totalypos <- 0
+for (i in 1:nrow(pieplotdf)) {
+  newypos <- sum(pieplotdf$Name == pieplotdf$Name[i])
+  if (newypos != lastypos) {
+      lastypos <- newypos
+      totalypos <- totalypos + lastypos
+  }
+  if (totalypos > nrow(pieplotdf)/2) {
+    totalypos <- totalypos-(nrow(pieplotdf)/2)
+  }
+  pieplotdf$yPosition[i] <- totalypos
+  pieplotdf$value[i] <- newypos
+}
+
+pieplotdf <- mutate(pieplotdf, mid_y = yPosition - value/2)
+
+
+piepart1 <- subset(pieplotdf, Location == "inner")
+
+pieplotpart1 <- ggplot(data = piepart1, aes(Location, fill = Name)) + geom_bar() +
+    geom_text(aes(x = rep(1, 1804/2), y = 1804/2-mid_y,
+                label = Name, size = 0.5, angle = 1804/2 + 360/(mid_y/2))) +
+  coord_polar(theta = "y", direction = 1)
+pieplotpart1
+
+
+
+pieplot <- ggplot(data = pieplotdf,
+                  aes(Location, fill = Name, order = value)) + geom_bar() +
+    geom_text(aes(x = c(rep(1, 1804/2), rep(2, 1804/2)),
+                  y = yPosition,
+                label = Name, size = 1))
+pieplot
+
+
+
+
+
+
+# For reference: the plasmid version of the pie plot from JointPlotter_2017_2_13
+    Pieplot <- ggplot(piedflist[[i]], aes(x = factor(1), y = value, fill = as.factor(variable))) +
+      geom_bar(stat = "identity", width = 1) + coord_polar(theta = "y", direction = 1) + 
+      geom_text_repel(aes(x = 1.6, y = yposition, label = value),
+                      box.padding = unit(0.05, "lines"), size = 3) +
+      labs(fill = "Array Yield") + scale_fill_manual(values = plasmidpiecolors) +
+      theme(axis.title=element_blank(), axis.text=element_blank(), axis.ticks=element_blank(),
+            panel.grid=element_blank(), panel.spacing = unit(8.25, "lines"), legend.position = "left")
+```
+
+
+
+
+
+
+
+
+Don't use this yet
+```{r Grid_arrange them together.  For some reason this eliminates all grid lines, etc}
+# Reorganize the legends a bit
+testternNPM1 <- ggtern(ternaryNPM1df, aes(NPM1aW, NPM1aM, NPM1aH)) +
+  geom_point(aes(color = otherlocus, shape = otherlocuszyg), size = 2.5) +
+  ggtitle("Patient 7", subtitle = "Base Mutation: NPM1a") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = "Secondary \nMutation", shape = "Secondary \nMutation Zygosity") +
+  theme_showarrows() + theme(legend.position = "left", complete = FALSE)
+
+testternFLT3ITD <- ggtern(ternaryFLT3ITDdf, aes(FLT3ITDW, FLT3ITDM, FLT3ITDH)) +
+  geom_point(aes(color = otherlocus, shape = otherlocuszyg), size = 2.5) +
+  ggtitle("Patient 7", subtitle = "Base Mutation: FLT3ITD") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = "Compared \nMutation", shape = "Compared \nMutation Zygosity") +
+  theme_showarrows() + theme(legend.position = "left", complete = FALSE)
+
+testternWT1 <- ggtern(ternaryWT1df, aes(WT1W, WT1M, WT1H)) +
+  geom_point(aes(color = otherlocus, shape = otherlocuszyg), size = 2.5) +
+  ggtitle("Patient 7", subtitle = "Base Mutation: WT1") +
+  labs(x = paste0(baselocus, "\n", "WT"), xarrow = ("WT / MUT %"),
+       y = paste0(baselocus, "\n", "MUT"), yarrow = ("MUT / HET %"),
+       z = paste0(baselocus, "\n", "HET"), zarrow = ("HET / WT %"),
+       color = "Compared \nMutation", shape = "Compared \nMutation Zygosity") +
+  theme_showarrows() + theme(legend.position = "right", complete = FALSE)
+
+layout <- rbind(c(NA, 1, 1, NA), c(2, 2, 3, 3))
+
+setwd(Patient7input)
+pdf("JointTernary.pdf", width = 10.5, height = 8)
+grid.arrange(testternNPM1, testternFLT3ITD, testternWT1, layout_matrix = layout)
+dev.off()
+```
+
+
+
+
+

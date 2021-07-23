@@ -1,0 +1,183 @@
+
+---
+title: "qPCR processing"
+author: "Jordan Smith"
+date: "September 8, 2016"
+output: html_document
+---
+
+```{R import CSV}
+library(ggplot2); library(gridExtra)
+
+setwd("/Users/Luke/Desktop/")
+filename <- "2017-9-20_FLT3-D835Y-GAT-TAT-MUT_PlasmidValidation_Repeat"
+
+data <- read.csv(file = paste(filename, ".csv", sep = ""), 
+                 header = T,
+                 #note: with CFX data, first 19 rows have run info, but no run data
+                 skip = 19)
+
+# problemwells <- c("A05", "A06", "A07", "A08", "A09", "B06", "C06", "C07", "C08", "C09", "D05", "D06", "D08")
+# for (i in 1:nrow(data)) {
+#   if (data[i, 1] %in% problemwells) {
+#     data <- data[-i, ]
+#   }
+# }
+```
+
+
+```{R Define tempGradient}
+#Separate the Well into wellCol and wellRow
+data$wellCol = substring(data$Well, 1, 1)
+data$wellRow = substring(data$Well, 2, 3)
+
+#Assign Mixes by Row
+# data$Mix[data$wellCol == "C"] <- "600 nM Zyg Probes"
+# data$Mix[data$wellCol == "D"] <- "400 nM Zyg Probes"
+# data$Mix[data$wellCol == "E"] <- "200 nM Zyg Probes"
+
+#Assign Annealing Temp by Row
+# data$Temp[data$wellCol == "A"] <- "56 dC"
+# data$Temp[data$wellCol == "I"] <- "54 dC"
+# data$Temp[data$wellCol == "P"] <- "52 dC"
+
+
+```
+
+```{R calculate mean}
+#calculate mean Cq
+Cq_df <- setNames(aggregate(data$Cq,
+                #list what columns to consider in mean calc
+                by=list(Sample=data$Sample,
+                        Fluor=data$Fluor,
+                        Target=data$Target),
+                data=data,
+                FUN=mean,
+                colnames = "MeanCq"),
+               #set names in order give in "by=list", plus name of calc'd col
+               c("Sample",
+                 "Fluor",
+                 "Target",
+                 "MeanCq"))
+```
+
+```{R spread by Target}
+#Note:  key = "The bare (unquoted) name of the column whose values will be used 
+#               as column headings.
+#       value = "The bare (unquoted) name of the column whose values will 
+#               populate the cells."
+library(dplyr)
+library(tidyr)
+
+#make tidy Cq table
+Cq_spread <- Cq_df %>%
+    select(Sample, Target, MeanCq) %>%
+    spread(key = Target, value = MeanCq)
+
+#order the rows
+row_order <- c("1e4 WT",
+               "1e3 WT",
+               "1e2 WT",
+               "1e1 WT",
+               "1e4 MUT",
+               "1e3 MUT",
+               "1e2 MUT",
+               "1e1 MUT",
+               "100 ng MOLM",
+               "10 ng MOLM",
+               "1 ng MOLM",
+               "100 pg MOLM",
+               "H2O")
+
+
+# Sort Cq by sample as well
+Cq_spread$Sample <- factor(Cq_spread$Sample, levels = row_order, ordered = TRUE)
+Cq_AnnealOrder <- Cq_spread[order(Cq_spread$Sample), ]
+
+```
+
+```{R save as .csv}
+#Write Cq Table 
+write.csv(x = Cq_AnnealOrder,
+            file = paste(filename, "_Cq_CRUNCHED.csv", sep = ""),
+            row.names = F)
+```
+
+```{R plot AlleleCall}
+FvH <- ggplot(data = RFU_spread, aes(x = Amp, y = WT, shape = factor(Sample))) +
+    geom_point(size = 3) + theme(legend.position="none") + 
+  labs(x= "FAM (Amp) End RFU", y = "HEX (WT) End RFU",
+       shape = "Sample", title = "FAM vs HEX") +
+  scale_shape_manual(values = c(15:18, 0:2, 3:4)) + facet_grid(Mix ~ .)
+
+FvC <- ggplot(data = RFU_spread, aes(x = Amp, y = MUT, shape = factor(Sample))) +
+  geom_point(size = 3) + theme(legend.position="none") + 
+  labs(x= "FAM (Amp) End RFU", y = "Cy5/TYE665 (MUT) End RFU",
+       shape = "Sample", title = "FAM vs Cy5") +
+  scale_shape_manual(values = c(15:18, 0:2, 3:4)) + facet_grid(Mix ~ .)
+
+HvC <- ggplot(data = RFU_spread, aes(x = MUT, y = WT, shape = factor(Sample))) +
+    geom_point(size = 3) +
+  labs(x= "Cy5/TYE665 (MUT) End RFU", y = "HEX (WT) End RFU",
+        shape = "Sample", title = "HEX vs Cy5") +
+  scale_shape_manual(values = c(15:18, 0:2, 3:4)) + facet_grid(Mix ~ .)
+
+pdf(paste(filename, ".pdf", sep = ""), width = 10.5, height=8)
+grid.arrange(FvH, FvC, HvC, ncol = 3, widths = c(3.5, 3.5, 5))
+dev.off()
+
+# + facet_grid(Mix ~ .)
+```
+
+```{r Get table of fluorescence differences}
+crunchedCSV <- RFU_AnnealOrder
+
+sampleList <- unique(crunchedCSV$Sample)
+mixColumn <- grep("Mix", colnames(crunchedCSV))
+
+generateDifferences <- function(mixVal) {
+  if (length(mixColumn) != 0) {
+    workingCSV <- subset(crunchedCSV, Mix == mixVal)
+  } else {
+    workingCSV <- crunchedCSV
+  }
+
+  NTCrows <- workingCSV[c(grep("H2O", sampleList)),
+                       c(grep("WT", colnames(workingCSV)),
+                         grep("MUT", colnames(workingCSV)),
+                         grep("Amp", colnames(workingCSV)))]
+
+  NTCvals <- as.data.frame(t(as.matrix(colMeans(NTCrows, na.rm = FALSE))))
+
+  ampMinusNTC <- mean(workingCSV$Amp[grep("WT", workingCSV$Sample)],
+                       workingCSV$Amp[grep("MUT", workingCSV$Sample)]) - NTCvals$Amp[1]
+  ampMinusHET <- workingCSV$Amp[grep("HET", workingCSV$Sample)]- NTCvals$Amp[1]
+
+  wtMinusNTC <- workingCSV$WT[grep("WT", workingCSV$Sample)] - NTCvals$WT
+  wtHETMinusNTC <- workingCSV$WT[grep("HET", workingCSV$Sample)] - NTCvals$WT
+  wtMinusMUT <- workingCSV$WT[grep("WT", workingCSV$Sample)] - 
+                    workingCSV$WT[grep("MUT", workingCSV$Sample)]
+
+  mutMinusNTC <- workingCSV$MUT[grep("MUT", workingCSV$Sample)] - NTCvals$MUT
+  mutHETMinusNTC <- workingCSV$MUT[grep("HET", workingCSV$Sample)] - NTCvals$MUT
+  mutMinusWT <- workingCSV$MUT[grep("MUT", workingCSV$Sample)] - 
+                    workingCSV$MUT[grep("WT", workingCSV$Sample)]
+
+  output <- as.data.frame(t(as.matrix(c(ampMinusNTC, wtMinusNTC, wtHETMinusNTC,
+                                      wtMinusMUT, mutMinusNTC, mutHETMinusNTC, mutMinusWT))))
+  colnames(output) <- c("Amp - NTC", "WT - NTC", "HET(HEX) - NTC", "WT - MUT", "MUT - NTC", "HET(Cy5) - NTC", "MUT - WT")
+  if (length(mixColumn) != 0) {
+    rownames(output) = mixVal
+  }
+  return(output)
+}
+
+if (length(mixColumn) != 0) {
+  test <- do.call(rbind, lapply(unique(crunchedCSV[, mixColumn]), function(x)
+                                generateDifferences(x)))
+}
+
+print(test)
+```
+
+

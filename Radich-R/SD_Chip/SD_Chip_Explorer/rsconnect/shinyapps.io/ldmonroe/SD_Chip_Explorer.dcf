@@ -1,0 +1,11 @@
+name: SD_Chip_Explorer
+title: SD_Chip_Explorer
+account: ldmonroe
+server: shinyapps.io
+appId: 186454
+bundleId: 855911
+url: https://ldmonroe.shinyapps.io/SD_Chip_Explorer/
+when: 1496785126.92564
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .smbdeleteAAA1787c4161|Alternative_Layout_1a.png|Alternative_Layout_1b.png|Alternative_Layouts.pptx|SD_Chip_Explorer_Screenshot.png|Shiny_Sandbox.Rmd|Thumbs.db|CSVs_for_Compiled/2016_11_21_MUnknown_Compiled.csv|CSVs_for_Compiled/2016_11_22_MUnknown_Compiled.csv|CSVs_for_Compiled/2016_12_02_M2_Compiled.csv|CSVs_for_Compiled/2016_12_02_M3_Compiled.csv|CSVs_for_Compiled/2016_12_06_M2_Compiled.csv|CSVs_for_Compiled/2016_12_06_M3_Compiled.csv|CSVs_for_Compiled/2017_01_03_M2_Compiled.csv|CSVs_for_Compiled/2017_01_03_M3_Compiled.csv|CSVs_for_Compiled/2017_01_04_M2_Compiled.csv|CSVs_for_Compiled/2017_01_04_M3_Compiled.csv|CSVs_for_Compiled/2017_01_04_M3_FluorSwap_Compiled.csv|CSVs_for_Compiled/2017_01_13_M2_Compiled.csv|CSVs_for_Compiled/2017_01_13_M3_Compiled.csv|CSVs_for_Compiled/2017_01_20_M3_Compiled.csv|CSVs_for_Compiled/2017_01_24_M3_Compiled.csv|CSVs_for_Compiled/2017_02_01_M2_Compiled.csv|CSVs_for_Compiled/2017_02_01_M3_Compiled.csv|CSVs_for_Compiled/2017_02_16_M3_Compiled.csv|CSVs_for_Compiled/Compile_Shiny_CSV.R
